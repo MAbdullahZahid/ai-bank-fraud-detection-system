@@ -9,6 +9,6 @@ pandas
 numpy
 xgboost
 python-multipart
-passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 email-validator

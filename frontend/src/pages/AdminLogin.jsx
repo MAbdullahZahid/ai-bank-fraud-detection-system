@@ -38,7 +38,7 @@ export default function AdminLogin() {
         <div className="eyebrow">Admin access</div>
         <h1 className="page-title">Sign in</h1>
         <p className="page-subtitle">
-          Manage accounts and review flagged transactions from the admin portal.
+          Manage accounts and monitor every transaction the fraud model has scored.
         </p>
 
         <div className="card">

@@ -1,19 +1,30 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../api";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import api, { authHeader } from "../api";
+
+const PHONE_REGEX = /^\+?[0-9]{7,15}$/;
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [tab, setTab] = useState("users");
 
+  const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [fraudLogs, setFraudLogs] = useState([]);
   const [error, setError] = useState("");
 
-  const [form, setForm] = useState({ full_name: "", email: "", password: "", balance: "" });
+  // Add-user form
+  const [form, setForm] = useState({ full_name: "", email: "", phone_number: "", password: "", balance: "" });
+  const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [formMsg, setFormMsg] = useState("");
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [editErrors, setEditErrors] = useState({});
 
   useEffect(() => {
     if (!localStorage.getItem("admin_token")) {
@@ -33,24 +44,59 @@ export default function AdminDashboard() {
   };
 
   const loadAll = () => {
-    api.get("/api/admin/users").then((r) => setUsers(r.data)).catch(handleAuthError);
-    api.get("/api/admin/transactions").then((r) => setTransactions(r.data)).catch(handleAuthError);
-    api.get("/api/admin/fraud-logs").then((r) => setFraudLogs(r.data)).catch(handleAuthError);
+    const headers = { headers: authHeader("admin") };
+    api.get("/api/admin/stats", headers).then((r) => setStats(r.data)).catch(handleAuthError);
+    api.get("/api/admin/users", headers).then((r) => setUsers(r.data)).catch(handleAuthError);
+    api.get("/api/admin/transactions", headers).then((r) => setTransactions(r.data)).catch(handleAuthError);
+    api.get("/api/admin/fraud-logs", headers).then((r) => setFraudLogs(r.data)).catch(handleAuthError);
+  };
+
+  // ---------- Add user ----------
+  const validateForm = () => {
+    const errs = {};
+    if (!form.full_name.trim() || form.full_name.trim().length < 2) {
+      errs.full_name = "Full name must be at least 2 characters.";
+    }
+    if (!form.email.trim() || !/^\S+@\S+\.\S+$/.test(form.email)) {
+      errs.email = "Enter a valid email address.";
+    }
+    if (!PHONE_REGEX.test(form.phone_number.trim())) {
+      errs.phone_number = "Enter a valid phone number (7-15 digits).";
+    }
+    if (!form.password || form.password.length < 6) {
+      errs.password = "Password must be at least 6 characters.";
+    }
+    if (form.balance !== "" && Number(form.balance) < 0) {
+      errs.balance = "Balance cannot be negative.";
+    }
+    setFormErrors(errs);
+    return Object.keys(errs).length === 0;
   };
 
   const submitUser = async (e) => {
     e.preventDefault();
     setFormMsg("");
+    if (!validateForm()) return;
+
     setSubmitting(true);
     try {
-      await api.post("/api/admin/users", {
-        full_name: form.full_name,
-        email: form.email,
-        password: form.password,
-        balance: Number(form.balance) || 0,
-      });
-      setForm({ full_name: "", email: "", password: "", balance: "" });
-      setFormMsg("User created.");
+      const res = await api.post(
+        "/api/admin/users",
+        {
+          full_name: form.full_name.trim(),
+          email: form.email.trim(),
+          phone_number: form.phone_number.trim(),
+          password: form.password,
+          balance: Number(form.balance) || 0,
+        },
+        { headers: authHeader("admin") }
+      );
+      setForm({ full_name: "", email: "", phone_number: "", password: "", balance: "" });
+      setFormMsg(
+        res.data.email_sent
+          ? "User created — account details emailed to them."
+          : "User created. Email was not sent (check SMTP settings in .env) — share their login details manually."
+      );
       loadAll();
     } catch (err) {
       setFormMsg(err.response?.data?.detail || "Could not create user.");
@@ -59,16 +105,131 @@ export default function AdminDashboard() {
     }
   };
 
+  // ---------- Edit user ----------
+  const startEdit = (user) => {
+    setEditingId(user.id);
+    setEditForm({
+      full_name: user.full_name,
+      email: user.email,
+      phone_number: user.phone_number,
+      balance: user.balance,
+    });
+    setEditErrors({});
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+    setEditErrors({});
+  };
+
+  const validateEdit = () => {
+    const errs = {};
+    if (!editForm.full_name || editForm.full_name.trim().length < 2) {
+      errs.full_name = "Too short.";
+    }
+    if (!/^\S+@\S+\.\S+$/.test(editForm.email || "")) {
+      errs.email = "Invalid email.";
+    }
+    if (!PHONE_REGEX.test((editForm.phone_number || "").trim())) {
+      errs.phone_number = "Invalid phone.";
+    }
+    if (editForm.balance !== "" && Number(editForm.balance) < 0) {
+      errs.balance = "Cannot be negative.";
+    }
+    setEditErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const saveEdit = async (userId) => {
+    if (!validateEdit()) return;
+    try {
+      await api.put(
+        `/api/admin/users/${userId}`,
+        {
+          full_name: editForm.full_name.trim(),
+          email: editForm.email.trim(),
+          phone_number: editForm.phone_number.trim(),
+          balance: Number(editForm.balance),
+        },
+        { headers: authHeader("admin") }
+      );
+      cancelEdit();
+      loadAll();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Could not update user.");
+    }
+  };
+
+  const deleteUser = async (userId, name) => {
+    if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/api/admin/users/${userId}`, { headers: authHeader("admin") });
+      loadAll();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Could not delete user.");
+    }
+  };
+
+  const chartData = stats
+    ? [
+        { name: "Legitimate", count: stats.legit_count },
+        { name: "Fraud", count: stats.fraud_count },
+      ]
+    : [];
+
   return (
     <div className="page">
-      <div className="container">
+      <div className="container" style={{ maxWidth: 1040 }}>
         <div className="eyebrow">Admin portal</div>
         <h1 className="page-title">Accounts &amp; transaction monitoring</h1>
         <p className="page-subtitle">
-          Add accounts, and review every transaction the model has scored.
+          Add and manage accounts, and review every transaction the model has scored.
         </p>
 
         {error && <div className="error-banner">{error}</div>}
+
+        {stats && (
+          <>
+            <div className="stat-grid">
+              <div className="stat-card">
+                <div className="stat-label">Total users</div>
+                <div className="stat-value">{stats.total_users}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Total transactions</div>
+                <div className="stat-value">{stats.total_transactions}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Fraud detected</div>
+                <div className="stat-value danger">{stats.fraud_count}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Fraud rate</div>
+                <div className="stat-value gold">{stats.fraud_rate}%</div>
+              </div>
+            </div>
+
+            <div className="chart-card">
+              <div className="card-title">Legitimate vs. fraud</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e3e6ec" />
+                  <XAxis dataKey="name" stroke="#5b6472" fontSize={12} />
+                  <YAxis stroke="#5b6472" fontSize={12} />
+                  <Tooltip
+                    contentStyle={{ background: "#ffffff", border: "1px solid #e3e6ec", borderRadius: 8 }}
+                    labelStyle={{ color: "#101828" }}
+                  />
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                    <Cell fill="#1f9d55" />
+                    <Cell fill="#d64545" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        )}
 
         <div className="tabs">
           <button className={`tab ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>
@@ -80,10 +241,7 @@ export default function AdminDashboard() {
           >
             Transactions ({transactions.length})
           </button>
-          <button
-            className={`tab ${tab === "fraud" ? "active" : ""}`}
-            onClick={() => setTab("fraud")}
-          >
+          <button className={`tab ${tab === "fraud" ? "active" : ""}`} onClick={() => setTab("fraud")}>
             Fraud logs ({fraudLogs.length})
           </button>
         </div>
@@ -93,44 +251,54 @@ export default function AdminDashboard() {
             <div className="card">
               <div className="card-title">Add a new user</div>
               {formMsg && <p className="helper-text">{formMsg}</p>}
-              <form onSubmit={submitUser}>
+              <form onSubmit={submitUser} noValidate>
                 <div className="field-row">
-                  <div className="field">
+                  <div className={`field ${formErrors.full_name ? "has-error" : ""}`}>
                     <label>Full name</label>
                     <input
                       value={form.full_name}
                       onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                      required
                     />
+                    {formErrors.full_name && <div className="field-error">{formErrors.full_name}</div>}
                   </div>
-                  <div className="field">
+                  <div className={`field ${formErrors.email ? "has-error" : ""}`}>
                     <label>Email</label>
                     <input
                       type="email"
                       value={form.email}
                       onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      required
                     />
+                    {formErrors.email && <div className="field-error">{formErrors.email}</div>}
                   </div>
                 </div>
                 <div className="field-row">
-                  <div className="field">
+                  <div className={`field ${formErrors.phone_number ? "has-error" : ""}`}>
+                    <label>Phone number</label>
+                    <input
+                      value={form.phone_number}
+                      onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
+                      placeholder="e.g. 03001234567"
+                    />
+                    {formErrors.phone_number && <div className="field-error">{formErrors.phone_number}</div>}
+                  </div>
+                  <div className={`field ${formErrors.password ? "has-error" : ""}`}>
                     <label>Password</label>
                     <input
                       type="password"
                       value={form.password}
                       onChange={(e) => setForm({ ...form, password: e.target.value })}
-                      required
                     />
+                    {formErrors.password && <div className="field-error">{formErrors.password}</div>}
                   </div>
-                  <div className="field">
-                    <label>Starting balance</label>
-                    <input
-                      type="number"
-                      value={form.balance}
-                      onChange={(e) => setForm({ ...form, balance: e.target.value })}
-                    />
-                  </div>
+                </div>
+                <div className={`field ${formErrors.balance ? "has-error" : ""}`}>
+                  <label>Starting balance</label>
+                  <input
+                    type="number"
+                    value={form.balance}
+                    onChange={(e) => setForm({ ...form, balance: e.target.value })}
+                  />
+                  {formErrors.balance && <div className="field-error">{formErrors.balance}</div>}
                 </div>
                 <button className="btn" type="submit" disabled={submitting}>
                   {submitting ? "Adding…" : "Add user"}
@@ -150,18 +318,83 @@ export default function AdminDashboard() {
                         <th>ID</th>
                         <th>Name</th>
                         <th>Email</th>
+                        <th>Phone</th>
                         <th>Balance</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map((u) => (
-                        <tr key={u.id}>
-                          <td>#{u.id}</td>
-                          <td>{u.full_name}</td>
-                          <td>{u.email}</td>
-                          <td>Rs {Number(u.balance).toLocaleString()}</td>
-                        </tr>
-                      ))}
+                      {users.map((u) =>
+                        editingId === u.id ? (
+                          <tr key={u.id}>
+                            <td>#{u.id}</td>
+                            <td>
+                              <input
+                                className="inline-edit-input"
+                                value={editForm.full_name}
+                                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                              />
+                              {editErrors.full_name && <div className="field-error">{editErrors.full_name}</div>}
+                            </td>
+                            <td>
+                              <input
+                                className="inline-edit-input"
+                                value={editForm.email}
+                                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                              />
+                              {editErrors.email && <div className="field-error">{editErrors.email}</div>}
+                            </td>
+                            <td>
+                              <input
+                                className="inline-edit-input"
+                                value={editForm.phone_number}
+                                onChange={(e) => setEditForm({ ...editForm, phone_number: e.target.value })}
+                              />
+                              {editErrors.phone_number && <div className="field-error">{editErrors.phone_number}</div>}
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                className="inline-edit-input"
+                                value={editForm.balance}
+                                onChange={(e) => setEditForm({ ...editForm, balance: e.target.value })}
+                              />
+                              {editErrors.balance && <div className="field-error">{editErrors.balance}</div>}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                <button className="icon-btn" onClick={() => saveEdit(u.id)}>
+                                  Save
+                                </button>
+                                <button className="icon-btn" onClick={cancelEdit}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          <tr key={u.id}>
+                            <td>#{u.id}</td>
+                            <td>{u.full_name}</td>
+                            <td>{u.email}</td>
+                            <td>{u.phone_number}</td>
+                            <td>Rs {Number(u.balance).toLocaleString()}</td>
+                            <td>
+                              <div className="row-actions">
+                                <button className="icon-btn" onClick={() => startEdit(u)}>
+                                  Edit
+                                </button>
+                                <button
+                                  className="icon-btn danger"
+                                  onClick={() => deleteUser(u.id, u.full_name)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -194,8 +427,8 @@ export default function AdminDashboard() {
                     {transactions.map((t) => (
                       <tr key={t.id}>
                         <td>#{t.id}</td>
-                        <td>#{t.sender_id}</td>
-                        <td>#{t.receiver_id}</td>
+                        <td>{t.sender_name} ({t.sender_phone})</td>
+                        <td>{t.receiver_name} ({t.receiver_phone})</td>
                         <td>{t.type}</td>
                         <td>Rs {Number(t.amount).toLocaleString()}</td>
                         <td>{t.fraud_probability?.toFixed(4)}</td>
@@ -226,6 +459,7 @@ export default function AdminDashboard() {
                     <tr>
                       <th>Log ID</th>
                       <th>Transaction</th>
+                      <th>Amount</th>
                       <th>Score</th>
                       <th>Threshold</th>
                       <th>Reason</th>
@@ -237,11 +471,10 @@ export default function AdminDashboard() {
                       <tr key={f.id}>
                         <td>#{f.id}</td>
                         <td>#{f.transaction_id}</td>
+                        <td>{f.amount ? `Rs ${Number(f.amount).toLocaleString()}` : "-"}</td>
                         <td>{f.model_score?.toFixed(4)}</td>
                         <td>{f.threshold}</td>
-                        <td style={{ whiteSpace: "normal", fontFamily: "var(--font-body)" }}>
-                          {f.reason}
-                        </td>
+                        <td style={{ whiteSpace: "normal", fontFamily: "var(--font-body)" }}>{f.reason}</td>
                         <td>{new Date(f.created_at).toLocaleString()}</td>
                       </tr>
                     ))}

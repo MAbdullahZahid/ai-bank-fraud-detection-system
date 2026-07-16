@@ -1,5 +1,8 @@
 """
-Admin login endpoint. Returns a JWT used to access all /api/admin/* routes.
+Two separate login flows:
+- Admin login (username/password, OAuth2 form) -> admin JWT
+- User login (phone_number/password, JSON body) -> user JWT
+Each token is tagged with a "role" claim so one can't be used as the other.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,17 +11,29 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.admin import Admin
+from app.models.user import User
 from app.services.auth_service import verify_password, create_access_token
 from app.schemas.admin import Token
+from app.schemas.user import UserLogin
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def admin_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     admin = db.query(Admin).filter(Admin.username == form_data.username).first()
     if not admin or not verify_password(form_data.password, admin.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    token = create_access_token({"sub": str(admin.id)})
+    token = create_access_token({"sub": str(admin.id), "role": "admin"})
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/user-login", response_model=Token)
+def user_login(credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.phone_number == credentials.phone_number.strip()).first()
+    if not user or not verify_password(credentials.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid phone number or password")
+
+    token = create_access_token({"sub": str(user.id), "role": "user"})
     return {"access_token": token, "token_type": "bearer"}

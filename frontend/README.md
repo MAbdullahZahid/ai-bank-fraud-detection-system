@@ -1,47 +1,49 @@
-# Ledger — Fraud Detection Frontend
+# AI Bank Fraud Detection — Frontend
 
-A React (Vite) frontend with two experiences:
-- **Home** — anyone can pick a sender/receiver, amount, and type, and submit
-  a live transaction. The result renders as a stamp: Approved or Flagged,
-  with the model's confidence score.
-- **Admin portal** (`/admin/login`) — sign in, add users with a starting
-  balance, and review every transaction and every fraud-flagged case.
+## What's new in this version
+- Rebranded to "AI Bank Fraud Detection"
+- Real customer login (phone number + password) - customers no longer pick
+  from a public list, they sign in and see only their own account
+- Transfers now target a **destination phone number** (like a mobile
+  wallet account number) - no directory of other users' numbers is exposed
+- Beautiful landing page with a hero + feature cards
+- Fully redesigned admin dashboard: stat cards, a legit-vs-fraud chart,
+  and full user management (add / edit / delete), all with validation
 
-## What to install
-
+## Install
 ```
 npm install
 ```
-This pulls in React, React Router, and Axios (already listed in package.json).
 
-## Configure the API URL
-
-`.env` already points to your local backend:
+## Configure
+`.env`:
 ```
 VITE_API_URL=http://127.0.0.1:8000
 ```
-Change this if your backend runs elsewhere.
 
-## Run it
-
-Make sure the backend (FastAPI) is already running first, then:
+## Run
+Backend must already be running, then:
 ```
 npm run dev
 ```
-Open the printed URL (usually http://localhost:5173).
 
 ## Pages
+| Route | Who | What |
+|---|---|---|
+| `/` | Public | Landing page |
+| `/login` | Public | Customer login (phone + password) |
+| `/transfer` | Customer | Send money by phone number, view own history |
+| `/admin/login` | Public | Admin login (username + password) |
+| `/admin/dashboard` | Admin | Stats, chart, users (add/edit/delete), transactions, fraud logs |
 
-| Route | What it does |
-|---|---|
-| `/` | Public transaction form — no login needed |
-| `/admin/login` | Admin sign-in (uses the admin you created with `create_admin.py`) |
-| `/admin/dashboard` | Add users, view all transactions, view fraud logs |
-
-## First-time flow to test everything
-
-1. Go to `/admin/login`, sign in with your admin credentials
-2. In the Admin portal, add 2-3 users with starting balances
-3. Go to `/` (home page), pick a sender/receiver, try a normal amount (e.g. 5,000) — should stamp "Approved"
-4. Try a very large TRANSFER amount (e.g. 5,000,000) — should stamp "Flagged"
-5. Go back to the admin portal → Transactions and Fraud logs tabs to see both logged
+## Test flow
+1. `/admin/login` → sign in as admin
+2. Admin portal → Users tab → add 2-3 users (now with phone numbers)
+3. Open a private/incognito window (or log out of admin) → `/login` →
+   sign in as one of those users (their phone + password)
+4. `/transfer` → enter another user's phone number, an amount, submit
+5. Back in the admin portal → see the transaction and (if flagged) the
+   fraud log, plus the updated stat cards and chart
+6. Try editing a user's balance or phone number from the admin table,
+   and try deleting a user with no transactions (should succeed) vs. one
+   with transactions (should show a clear error)

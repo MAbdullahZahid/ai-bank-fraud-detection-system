@@ -4,13 +4,12 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://127.0.0.1:8000",
 });
 
-// Attach the admin token automatically if present
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("admin_token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+// Admin and User are separate identities with separate tokens.
+// Call sites pass which one a request needs.
+export const authHeader = (kind) => {
+  const key = kind === "admin" ? "admin_token" : "user_token";
+  const token = localStorage.getItem(key);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 export default api;

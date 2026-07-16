@@ -1,82 +1,91 @@
 # Fraud Detection Backend
 
+## IMPORTANT - if you already ran an earlier version of this backend
+The `users` table now has a new `phone_number` column, and auth has changed
+(admin vs. user are now separate logins with separate tokens). Your existing
+database was created before this column existed, and `create_all()` does
+NOT alter existing tables - it only creates missing ones.
+
+**You need to drop and let it recreate fresh.** Easiest way, in pgAdmin:
+1. Right-click your `fraud_detection` database's tables (`users`, `admins`,
+   `transactions`, `fraud_logs`) → Delete/Drop each one (or drop and
+   recreate the whole database)
+2. Run the backend again - it will detect the tables are missing and
+   recreate the full schema, including `phone_number`
+3. Run `create_admin.py` again to make a fresh admin login
+
+## What changed in this version
+- Users now have a `phone_number` (used like a mobile wallet account number)
+- Users can log in themselves (`POST /api/auth/user-login` with phone+password)
+  and send money to another user by typing in *their* phone number - no
+  directory of other users' phone numbers is ever exposed
+- Admin can now **edit** and **delete** users, not just create/list
+- New `GET /api/admin/stats` endpoint for dashboard summary numbers
+- Admin transaction/fraud-log views are enriched with names + phone numbers
+
 ## Folder structure
 ```
 backend/
 ├── app/
-│   ├── main.py                  <- FastAPI entrypoint (run this)
-│   ├── database.py              <- DB connection + auto schema creation
-│   ├── models/                  <- SQLAlchemy table definitions
-│   │   ├── user.py
-│   │   ├── admin.py
-│   │   ├── transaction.py
-│   │   └── fraud_log.py
-│   ├── schemas/                 <- Pydantic request/response validation
-│   │   ├── user.py
-│   │   ├── admin.py
-│   │   └── transaction.py
-│   ├── routers/                 <- API endpoints, grouped by feature
-│   │   ├── auth.py              <- admin login
-│   │   ├── users.py             <- admin creates users / public dropdown
-│   │   ├── transactions.py      <- core fraud-check flow
-│   │   └── deps.py              <- shared JWT auth dependency
+│   ├── main.py
+│   ├── database.py
+│   ├── models/            (users now include phone_number)
+│   ├── schemas/            (validation: phone format, password length, etc.)
+│   ├── routers/
+│   │   ├── auth.py         admin login + user login (two separate JWT flows)
+│   │   ├── users.py        admin CRUD (create/list/edit/delete) + /api/me
+│   │   ├── transactions.py user transfers by phone + admin views + stats
+│   │   └── deps.py         role-aware JWT dependencies (admin vs. user)
 │   └── services/
-│       ├── auth_service.py      <- password hashing + JWT
-│       └── ml_service.py        <- loads model, builds features, predicts
-├── create_admin.py              <- run once to create your first admin login
+│       ├── auth_service.py
+│       └── ml_service.py
+├── create_admin.py
 ├── .env
 └── requirements.txt
 ```
 
 ## Setup steps
+1. Create/confirm the Postgres database exists (`fraud_detection`)
+2. Update `.env` with your real Postgres password
+3. `pip install -r requirements.txt`
+4. Confirm `ml/models/` has the 3 `.joblib` files, matching `MODEL_PATH` in `.env`
+5. Run: `uvicorn app.main:app --reload`
+6. Run once: `python create_admin.py`
+7. Test in Swagger: `http://127.0.0.1:8000/docs`
+   - `POST /api/auth/login` (admin) or `POST /api/auth/user-login` (a user
+     created by the admin) - each returns a different token
+   - Admin routes need the admin token; `/api/transactions` and `/api/me`
+     need a user token
 
-1. Create the Postgres database (matching your DATABASE_URL in .env):
-   ```sql
-   CREATE DATABASE fraud_detection;
-   ```
+## Key endpoints
+| Method | Path | Who | What |
+|---|---|---|---|
+| POST | /api/auth/login | Public | Admin login (form data) |
+| POST | /api/auth/user-login | Public | User login (JSON: phone_number, password) |
+| POST | /api/admin/users | Admin | Create a user |
+| GET | /api/admin/users | Admin | List all users |
+| PUT | /api/admin/users/{id} | Admin | Edit a user |
+| DELETE | /api/admin/users/{id} | Admin | Delete a user |
+| GET | /api/me | User | Own profile + balance |
+| POST | /api/transactions | User | Send money by destination phone number |
+| GET | /api/transactions/me | User | Own transaction history |
+| GET | /api/admin/transactions | Admin | All transactions (enriched) |
+| GET | /api/admin/fraud-logs | Admin | All fraud flags (enriched) |
+| GET | /api/admin/stats | Admin | Summary numbers for the dashboard |
 
-2. Update `.env` with your real Postgres password.
+## Email notifications on user creation
+When an admin creates a user, they now receive a welcome email with their
+phone number (account number), password, and starting balance.
 
-3. Install dependencies (from inside `backend/`):
+**Setup (Gmail example):**
+1. Enable 2-Step Verification on the Gmail account you'll send from
+2. Generate an App Password: https://myaccount.google.com/apppasswords
+3. In `.env`, set:
    ```
-   pip install -r requirements.txt
+   SMTP_USER=your_email@gmail.com
+   SMTP_PASSWORD=the_16_char_app_password   <- NOT your normal Gmail password
    ```
+4. Restart the backend
 
-4. Make sure your ml/models/ folder (from the ML phase) is placed correctly
-   relative to this backend folder, matching MODEL_PATH in .env:
-   ```
-   project-root/
-   ├── backend/     <- you run uvicorn from here
-   └── ml/
-       └── models/
-           ├── xgboost_model.joblib
-           ├── label_encoder.joblib
-           └── scaler.joblib
-   ```
-
-5. Run the backend (this auto-creates the schema on first run):
-   ```
-   uvicorn app.main:app --reload
-   ```
-   Watch the terminal - you'll see either "Creating missing tables..." (first run)
-   or "Schema already exists. Connected without changes." (every run after).
-
-6. Create your first admin login (only needed once):
-   ```
-   python create_admin.py
-   ```
-
-7. Open http://127.0.0.1:8000/docs - FastAPI's interactive Swagger UI.
-   From here you can:
-   - POST /api/auth/login (as your admin) - copy the returned access_token
-   - Click "Authorize" (top right) and paste the token to unlock admin routes
-   - POST /api/admin/users - add users with a starting balance
-   - GET /api/users - see the public list (for the frontend's transaction dropdown)
-   - POST /api/transactions - submit a transaction and see the fraud decision live
-   - GET /api/admin/transactions and /api/admin/fraud-logs - the admin portal data
-
-## How the fraud decision works
-- If the model's fraud probability >= THRESHOLD (currently 0.7, from .env) ->
-  transaction is marked "fraud", balances are NOT updated, and an entry is
-  written to fraud_logs for the admin portal to display.
-- Otherwise -> marked "legit", balances update normally.
+If SMTP isn't configured, user creation still works - the email is just
+skipped, and the admin dashboard will tell you to share the details manually.
