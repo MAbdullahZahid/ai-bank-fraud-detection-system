@@ -25,6 +25,7 @@ from app.models.fraud_log import FraudLog
 from app.schemas.transaction import TransactionCreate, TransactionOut
 from app.services.ml_service import predict_fraud, THRESHOLD
 from app.routers.deps import get_current_admin, get_current_user
+from app.services.email_service import send_transaction_email, send_admin_fraud_alert
 
 router = APIRouter(prefix="/api", tags=["Transactions"])
 
@@ -100,10 +101,29 @@ def create_transaction(
         )
         db.add(fraud_log)
         db.commit()
+
+        # NEW - notify the customer and the admin
+        send_transaction_email(
+            to_email=current_user.email, full_name=current_user.full_name,
+            transaction_type=tx_in.type, amount=tx_in.amount,
+            is_fraud=True, probability=probability,
+        )
+        send_admin_fraud_alert(
+            user_full_name=current_user.full_name, user_phone=current_user.phone_number,
+            transaction_type=tx_in.type, amount=tx_in.amount,
+            probability=probability, transaction_id=transaction.id,
+        )
     else:
-        sender.balance = new_balance_orig
+        current_user.balance = new_balance_orig
         receiver.balance = new_balance_dest
         db.commit()
+
+        # NEW - notify the customer
+        send_transaction_email(
+            to_email=current_user.email, full_name=current_user.full_name,
+            transaction_type=tx_in.type, amount=tx_in.amount,
+            is_fraud=False, probability=probability,
+        )
 
     return transaction
 

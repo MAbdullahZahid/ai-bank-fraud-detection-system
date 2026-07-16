@@ -32,10 +32,15 @@ const SCENARIOS = [
     type: "PAYMENT",
     title: "Merchant payment",
     subtitle: "Checkout terminal",
-    description: "Customer pays a merchant like a real point-of-sale checkout.",
+    description: "Pick a merchant to pay, like a real point-of-sale checkout.",
     outcome: "Ideal for legal payment scenarios that should look clean.",
-    counterpartyLabel: "Merchant phone",
-    defaultCounterparty: "03009990002",
+    counterpartyLabel: "Merchant",
+    defaultCounterparty: "03009991001",
+    counterpartyOptions: [
+      { name: "Careem", phone: "03009991001" },
+      { name: "Foodpanda", phone: "03009991002" },
+      { name: "Daraz", phone: "03009991003" },
+    ],
     direction: "outgoing",
     accent: "legit",
     scene: "payment",
@@ -56,10 +61,15 @@ const SCENARIOS = [
     type: "DEBIT",
     title: "Auto debit",
     subtitle: "Recurring deduction",
-    description: "A recurring bill or fee is deducted automatically.",
+    description: "Pick a biller - a recurring bill is deducted automatically.",
     outcome: "Useful for bank fees, utilities, and scheduled deductions.",
-    counterpartyLabel: "Biller phone",
-    defaultCounterparty: "03009990004",
+    counterpartyLabel: "Biller",
+    defaultCounterparty: "03009992001",
+    counterpartyOptions: [
+      { name: "K-Electric", phone: "03009992001" },
+      { name: "PTCL Internet", phone: "03009992002" },
+      { name: "Sui Gas", phone: "03009992003" },
+    ],
     direction: "outgoing",
     accent: "legit",
     scene: "debit",
@@ -686,13 +696,30 @@ export default function Transfer() {
               ) : (
                 <form onSubmit={submit} noValidate>
                   <div className={`field ${errors.counterpartyPhone ? "has-error" : ""}`}>
-                    <label htmlFor="counterparty-phone">{scenario.counterpartyLabel}</label>
-                    <input
-                      id="counterparty-phone"
-                      value={counterpartyPhone}
-                      onChange={(e) => setCounterpartyPhone(e.target.value)}
-                      placeholder={scenario.defaultCounterparty}
-                    />
+                    <label>{scenario.counterpartyLabel}</label>
+
+                    {scenario.counterpartyOptions ? (
+                      <div className="option-list">
+                        {scenario.counterpartyOptions.map((opt) => (
+                          <button
+                            key={opt.phone}
+                            type="button"
+                            className={`option-pill ${counterpartyPhone === opt.phone ? "active" : ""}`}
+                            onClick={() => setCounterpartyPhone(opt.phone)}
+                          >
+                            {opt.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <input
+                        id="counterparty-phone"
+                        value={counterpartyPhone}
+                        onChange={(e) => setCounterpartyPhone(e.target.value)}
+                        placeholder={scenario.defaultCounterparty}
+                      />
+                    )}
+
                     {errors.counterpartyPhone && <div className="field-error">{errors.counterpartyPhone}</div>}
                     <div className="helper-text">{scenario.description}</div>
                   </div>
