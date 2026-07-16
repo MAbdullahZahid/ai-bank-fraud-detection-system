@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import api, { authHeader } from "../api";
 
-const PHONE_REGEX = /^\+?[0-9]{7,15}$/;
+const PHONE_REGEX = /^\+?\d{7,15}$/;
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -25,6 +25,21 @@ export default function AdminDashboard() {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editErrors, setEditErrors] = useState({});
+
+  const clearSession = () => {
+    localStorage.removeItem("admin_token");
+    localStorage.removeItem("user_token");
+  };
+
+  const goHome = () => {
+    clearSession();
+    navigate("/");
+  };
+
+  const logout = () => {
+    clearSession();
+    navigate("/admin/login");
+  };
 
   useEffect(() => {
     if (!localStorage.getItem("admin_token")) {
@@ -57,7 +72,7 @@ export default function AdminDashboard() {
     if (!form.full_name.trim() || form.full_name.trim().length < 2) {
       errs.full_name = "Full name must be at least 2 characters.";
     }
-    if (!form.email.trim() || !/^\S+@\S+\.\S+$/.test(form.email)) {
+    if (!form.email.trim() || !form.email.includes("@") || !form.email.includes(".")) {
       errs.email = "Enter a valid email address.";
     }
     if (!PHONE_REGEX.test(form.phone_number.trim())) {
@@ -128,7 +143,7 @@ export default function AdminDashboard() {
     if (!editForm.full_name || editForm.full_name.trim().length < 2) {
       errs.full_name = "Too short.";
     }
-    if (!/^\S+@\S+\.\S+$/.test(editForm.email || "")) {
+    if (!(editForm.email || "").includes("@") || !(editForm.email || "").includes(".")) {
       errs.email = "Invalid email.";
     }
     if (!PHONE_REGEX.test((editForm.phone_number || "").trim())) {
@@ -181,6 +196,14 @@ export default function AdminDashboard() {
   return (
     <div className="page">
       <div className="container" style={{ maxWidth: 1040 }}>
+        <div className="page-actions">
+          <button type="button" className="icon-btn" onClick={goHome}>
+            Home
+          </button>
+          <button type="button" className="icon-btn danger" onClick={logout}>
+            Logout
+          </button>
+        </div>
         <div className="eyebrow">Admin portal</div>
         <h1 className="page-title">Accounts &amp; transaction monitoring</h1>
         <p className="page-subtitle">
@@ -221,10 +244,14 @@ export default function AdminDashboard() {
                     contentStyle={{ background: "#ffffff", border: "1px solid #e3e6ec", borderRadius: 8 }}
                     labelStyle={{ color: "#101828" }}
                   />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                    <Cell fill="#1f9d55" />
-                    <Cell fill="#d64545" />
-                  </Bar>
+                  <Bar
+                    dataKey="count"
+                    radius={[4, 4, 0, 0]}
+                    shape={(props) => {
+                      const fill = props.payload?.name === "Fraud" ? "#d64545" : "#1f9d55";
+                      return <rect x={props.x} y={props.y} width={props.width} height={props.height} fill={fill} rx={4} ry={4} />;
+                    }}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -254,16 +281,18 @@ export default function AdminDashboard() {
               <form onSubmit={submitUser} noValidate>
                 <div className="field-row">
                   <div className={`field ${formErrors.full_name ? "has-error" : ""}`}>
-                    <label>Full name</label>
+                    <label htmlFor="admin-full-name">Full name</label>
                     <input
+                      id="admin-full-name"
                       value={form.full_name}
                       onChange={(e) => setForm({ ...form, full_name: e.target.value })}
                     />
                     {formErrors.full_name && <div className="field-error">{formErrors.full_name}</div>}
                   </div>
                   <div className={`field ${formErrors.email ? "has-error" : ""}`}>
-                    <label>Email</label>
+                    <label htmlFor="admin-email">Email</label>
                     <input
+                      id="admin-email"
                       type="email"
                       value={form.email}
                       onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -273,8 +302,9 @@ export default function AdminDashboard() {
                 </div>
                 <div className="field-row">
                   <div className={`field ${formErrors.phone_number ? "has-error" : ""}`}>
-                    <label>Phone number</label>
+                    <label htmlFor="admin-phone">Phone number</label>
                     <input
+                      id="admin-phone"
                       value={form.phone_number}
                       onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
                       placeholder="e.g. 03001234567"
@@ -282,8 +312,9 @@ export default function AdminDashboard() {
                     {formErrors.phone_number && <div className="field-error">{formErrors.phone_number}</div>}
                   </div>
                   <div className={`field ${formErrors.password ? "has-error" : ""}`}>
-                    <label>Password</label>
+                    <label htmlFor="admin-password-create">Password</label>
                     <input
+                      id="admin-password-create"
                       type="password"
                       value={form.password}
                       onChange={(e) => setForm({ ...form, password: e.target.value })}
@@ -292,8 +323,9 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className={`field ${formErrors.balance ? "has-error" : ""}`}>
-                  <label>Starting balance</label>
+                  <label htmlFor="admin-balance">Starting balance</label>
                   <input
+                    id="admin-balance"
                     type="number"
                     value={form.balance}
                     onChange={(e) => setForm({ ...form, balance: e.target.value })}
@@ -330,6 +362,7 @@ export default function AdminDashboard() {
                             <td>#{u.id}</td>
                             <td>
                               <input
+                                id={`edit-name-${u.id}`}
                                 className="inline-edit-input"
                                 value={editForm.full_name}
                                 onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
@@ -338,6 +371,7 @@ export default function AdminDashboard() {
                             </td>
                             <td>
                               <input
+                                id={`edit-email-${u.id}`}
                                 className="inline-edit-input"
                                 value={editForm.email}
                                 onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
@@ -346,6 +380,7 @@ export default function AdminDashboard() {
                             </td>
                             <td>
                               <input
+                                id={`edit-phone-${u.id}`}
                                 className="inline-edit-input"
                                 value={editForm.phone_number}
                                 onChange={(e) => setEditForm({ ...editForm, phone_number: e.target.value })}
@@ -354,6 +389,7 @@ export default function AdminDashboard() {
                             </td>
                             <td>
                               <input
+                                id={`edit-balance-${u.id}`}
                                 type="number"
                                 className="inline-edit-input"
                                 value={editForm.balance}

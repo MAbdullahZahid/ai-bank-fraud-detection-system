@@ -69,3 +69,10 @@ class UserProfile(BaseModel):
 class UserCreateResult(BaseModel):
     user: UserOut
     email_sent: bool
+
+class VerifyPasswordRequest(BaseModel):
+    password: str
+
+
+class VerifyPasswordResponse(BaseModel):
+    valid: bool

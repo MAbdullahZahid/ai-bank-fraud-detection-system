@@ -49,3 +49,44 @@ def init_db():
         print("[DB INIT] Schema created successfully.")
     else:
         print("[DB INIT] Schema already exists. Connected without changes.")
+
+    _seed_demo_accounts()
+
+
+def _seed_demo_accounts():
+    """Create repeatable demo counterparties so each scenario can be tested right away."""
+    from app.models.user import User
+    from app.services.auth_service import hash_password
+
+    demo_accounts = [
+      
+    ]
+
+    db = SessionLocal()
+    try:
+        changed = False
+        for account in demo_accounts:
+            exists = (
+                db.query(User)
+                .filter((User.email == account["email"]) | (User.phone_number == account["phone_number"]))
+                .first()
+            )
+            if exists:
+                continue
+
+            db.add(
+                User(
+                    full_name=account["full_name"],
+                    email=account["email"],
+                    phone_number=account["phone_number"],
+                    password=hash_password("Demo123!"),
+                    balance=account["balance"],
+                )
+            )
+            changed = True
+
+        if changed:
+            db.commit()
+            print("[DB INIT] Demo accounts ensured for scenario testing.")
+    finally:
+        db.close()

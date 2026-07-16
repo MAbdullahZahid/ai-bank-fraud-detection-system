@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../api";
 
 export default function UserLogin() {
@@ -10,11 +10,17 @@ export default function UserLogin() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  useEffect(() => {
+    if (localStorage.getItem("user_token")) {
+      navigate("/transfer");
+    }
+  }, [navigate]);
+
   const validate = () => {
     const errs = {};
     if (!phone.trim()) {
       errs.phone = "Phone number is required.";
-    } else if (!/^\+?[0-9]{7,15}$/.test(phone.trim())) {
+    } else if (!/^\+?\d{7,15}$/.test(phone.trim())) {
       errs.phone = "Enter a valid phone number (7-15 digits).";
     }
     if (!password) {
@@ -35,7 +41,9 @@ export default function UserLogin() {
         phone_number: phone.trim(),
         password,
       });
+      localStorage.removeItem("admin_token");
       localStorage.setItem("user_token", res.data.access_token);
+      
       navigate("/transfer");
     } catch (err) {
       setApiError(err.response?.data?.detail || "Login failed. Check your phone number and password.");
@@ -57,8 +65,9 @@ export default function UserLogin() {
           {apiError && <div className="error-banner">{apiError}</div>}
           <form onSubmit={submit} noValidate>
             <div className={`field ${errors.phone ? "has-error" : ""}`}>
-              <label>Phone number</label>
+              <label htmlFor="customer-phone">Phone number</label>
               <input
+                id="customer-phone"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="e.g. 03001234567"
@@ -67,8 +76,9 @@ export default function UserLogin() {
               {errors.phone && <div className="field-error">{errors.phone}</div>}
             </div>
             <div className={`field ${errors.password ? "has-error" : ""}`}>
-              <label>Password</label>
+              <label htmlFor="customer-password">Password</label>
               <input
+                id="customer-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -79,6 +89,9 @@ export default function UserLogin() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+          <div className="login-footer">
+            <Link to="/">Back to home</Link>
+          </div>
         </div>
       </div>
     </div>

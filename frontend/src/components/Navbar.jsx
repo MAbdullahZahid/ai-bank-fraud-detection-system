@@ -6,24 +6,30 @@ export default function Navbar() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Re-check tokens on every render (location change triggers this) so the
-  // navbar never shows stale login/logout state after navigating.
   const isAdmin = !!localStorage.getItem("admin_token");
   const isUser = !!localStorage.getItem("user_token");
 
-  // Close the mobile menu whenever the route changes
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
 
-  const logoutAdmin = () => {
+  const clearSession = () => {
     localStorage.removeItem("admin_token");
-    navigate("/admin/login");
+    localStorage.removeItem("user_token");
+  };
+
+  const goHome = () => {
+    clearSession();
   };
 
   const logoutUser = () => {
-    localStorage.removeItem("user_token");
+    clearSession();
     navigate("/login");
+  };
+
+  const logoutAdmin = () => {
+    clearSession();
+    navigate("/admin/login");
   };
 
   const isActive = (path) => location.pathname === path;
@@ -31,58 +37,75 @@ export default function Navbar() {
   return (
     <div className="nav">
       <div className="nav-inner">
-        <Link to="/" className="brand">
+        <Link to="/" className="brand" onClick={goHome}>
           <span className="brand-mark">AI</span>
-          AI Bank Fraud Detection
+          <span className="brand-text">AI Bank Fraud Detection</span>
         </Link>
 
         <button
+          type="button"
           className="nav-toggle"
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={() => setMenuOpen((value) => !value)}
           aria-label="Toggle menu"
         >
-          <span></span>
-          <span></span>
-          <span></span>
+          <span />
+          <span />
+          <span />
         </button>
 
         <div className={`nav-links ${menuOpen ? "open" : ""}`}>
           <div className="nav-group">
-            <Link to="/" className={isActive("/") ? "active" : ""}>
+            <Link to="/" className={isActive("/") ? "active" : ""} onClick={goHome}>
               Home
             </Link>
-          </div>
-
-          <div className="nav-group">
-            {isUser ? (
-              <>
-                <Link to="/transfer" className={isActive("/transfer") ? "active" : ""}>
-                  Transfer
-                </Link>
-                <button onClick={logoutUser}>Customer log out</button>
-              </>
-            ) : (
-              <Link to="/login" className={isActive("/login") ? "active" : ""}>
-                Customer login
+            {isUser && (
+              <Link to="/transfer" className={isActive("/transfer") ? "active" : ""}>
+                Console
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                to="/admin/dashboard"
+                className={location.pathname.startsWith("/admin/dashboard") ? "active" : ""}
+              >
+                Dashboard
               </Link>
             )}
           </div>
 
           <div className="nav-group">
-            {isAdmin ? (
-              <>
-                <Link
-                  to="/admin/dashboard"
-                  className={location.pathname.startsWith("/admin/dashboard") ? "active" : ""}
-                >
-                  Admin portal
-                </Link>
-                <button onClick={logoutAdmin}>Admin log out</button>
-              </>
-            ) : (
-              <Link to="/admin/login" className={isActive("/admin/login") ? "active" : ""}>
-                Admin login
+            {isUser ? (
+              <Link to="/transfer" className={`nav-action ${isActive("/transfer") ? "active" : ""}`}>
+                Customer dashboard
               </Link>
+            ) : (
+            <Link
+  to="/login"
+  className={`nav-action ${isActive("/login") ? "active" : ""}`}
+  onClick={() => {
+    localStorage.removeItem("admin_token");
+  }}
+>
+  Customer login
+</Link>
+            )}
+          </div>
+
+          <div className="nav-group">
+            {isAdmin ? (
+              <button type="button" className="nav-action danger" onClick={logoutAdmin}>
+                Logout
+              </button>
+            ) : (
+              <Link
+  to="/admin/login"
+  className={`nav-action ${isActive("/admin/login") ? "active" : ""}`}
+  onClick={() => {
+    localStorage.removeItem("user_token");
+  }}
+>
+  Admin login
+</Link>
             )}
           </div>
         </div>

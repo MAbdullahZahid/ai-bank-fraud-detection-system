@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../api";
 
 export default function AdminLogin() {
@@ -8,6 +8,12 @@ export default function AdminLogin() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (localStorage.getItem("admin_token")) {
+      navigate("/admin/dashboard");
+    }
+  }, [navigate]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -23,6 +29,7 @@ export default function AdminLogin() {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
 
+      localStorage.removeItem("user_token");
       localStorage.setItem("admin_token", res.data.access_token);
       navigate("/admin/dashboard");
     } catch (err) {
@@ -45,12 +52,13 @@ export default function AdminLogin() {
           {error && <div className="error-banner">{error}</div>}
           <form onSubmit={submit}>
             <div className="field">
-              <label>Username</label>
-              <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+              <label htmlFor="admin-username">Username</label>
+              <input id="admin-username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
             </div>
             <div className="field">
-              <label>Password</label>
+              <label htmlFor="admin-password">Password</label>
               <input
+                id="admin-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -60,6 +68,9 @@ export default function AdminLogin() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+          <div className="login-footer">
+            <Link to="/">Back to home</Link>
+          </div>
         </div>
       </div>
     </div>

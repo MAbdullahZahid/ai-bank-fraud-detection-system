@@ -17,6 +17,7 @@ export default function App() {
           <Route path="/transfer" element={<Transfer />} />
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
+          <Route path="*" element={<Landing />} />
         </Routes>
       </div>
     </BrowserRouter>

@@ -1,53 +1,84 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 
+const CARDS = [
+  {
+    code: "01",
+    title: "Customer console",
+    text: "See profile, balance, and transaction history after login.",
+  },
+  {
+    code: "02",
+    title: "Scenario cards",
+    text: "Pick a bank flow and get the right counterparty phone for easy testing.",
+  },
+  {
+    code: "03",
+    title: "Fraud feedback",
+    text: "Blocked fraud, received cash-in, and legitimate transfers are labeled clearly.",
+  },
+];
+
+const SCENARIOS = [
+  ["TRANSFER", "Customer to customer", "Direct person-to-person money movement."],
+  ["CASH_OUT", "ATM style", "Withdrawal-style testing with an ATM or agent counterparty."],
+  ["PAYMENT", "Merchant", "Simulate paying a store or merchant account."],
+  ["CASH_IN", "Deposit", "Money enters the account and should display as received."],
+  ["DEBIT", "Automatic", "Use this for bank deductions, utility bills, or scheduled charges."],
+  ["ADMIN", "Monitoring", "Track flagged transactions and review fraud logs from the admin dashboard."],
+];
+
 export default function Landing() {
+  useEffect(() => {
+    localStorage.removeItem("admin_token");
+    localStorage.removeItem("user_token");
+  }, []);
+
   return (
     <div className="page">
-      <div className="container">
-        <div className="hero">
+      <div className="container bank-shell">
+        <section className="hero">
           <div className="eyebrow">Real-time fraud scoring</div>
-          <h1>Every transfer, checked before it settles.</h1>
+          <h1>Bank-style scenario testing with fraud checks built in.</h1>
           <p>
-            An AI model scores every transaction the instant it's submitted —
-            trained on millions of real transaction patterns to catch fraud
-            without slowing down legitimate transfers.
+            Test transfer, cash out, payment, cash in, and debit flows from a clean customer console.
+            Fraudulent cases are blocked, received cash-in is shown clearly, and the admin portal stays in sync.
           </p>
           <div className="hero-actions">
             <Link to="/login" className="btn" style={{ textDecoration: "none" }}>
               Customer login
             </Link>
-            <Link to="/admin/login" className="btn-secondary" style={{ textDecoration: "none", padding: "14px 28px", borderRadius: 6 }}>
+            <Link
+              to="/admin/login"
+              className="btn-secondary"
+              style={{ textDecoration: "none", padding: "14px 28px", borderRadius: 6 }}
+            >
               Admin login
             </Link>
           </div>
-        </div>
+        </section>
 
-        <div className="feature-grid">
-          <div className="feature-card">
-            <div className="feature-icon">01</div>
-            <h3>Instant scoring</h3>
-            <p>
-              Every transfer is passed through a trained XGBoost model the
-              moment it's submitted — no waiting, no batch review.
-            </p>
-          </div>
-          <div className="feature-card">
-            <div className="feature-icon">02</div>
-            <h3>Phone-based transfers</h3>
-            <p>
-              Send money using just a destination phone number — like a
-              mobile wallet. No public directory of other accounts.
-            </p>
-          </div>
-          <div className="feature-card">
-            <div className="feature-icon">03</div>
-            <h3>Admin oversight</h3>
-            <p>
-              Every flagged transaction is logged with a model confidence
-              score and reason, visible to admins in real time.
-            </p>
-          </div>
-        </div>
+        <section className="feature-grid">
+          {CARDS.map((card) => (
+            <article className="feature-card" key={card.code}>
+              <div className="feature-icon">{card.code}</div>
+              <h3>{card.title}</h3>
+              <p>{card.text}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="scenario-grid">
+          {SCENARIOS.map(([title, subtitle, text]) => (
+            <article className="scenario-card" key={title}>
+              <div className="scenario-card-head">
+                <span>{title}</span>
+                <span>{subtitle}</span>
+              </div>
+              <p>{text}</p>
+            </article>
+          ))}
+        </section>
       </div>
     </div>
   );

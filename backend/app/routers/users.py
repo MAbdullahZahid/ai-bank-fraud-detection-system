@@ -12,10 +12,11 @@ from typing import List
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate, UserOut, UserProfile, UserCreateResult
-from app.services.auth_service import hash_password
+from app.schemas.user import UserCreate, UserUpdate, UserOut, UserProfile, UserCreateResult  ,  VerifyPasswordRequest, VerifyPasswordResponse
+from app.services.auth_service import hash_password, verify_password
 from app.services.email_service import send_welcome_email
 from app.routers.deps import get_current_admin, get_current_user
+
 
 router = APIRouter(prefix="/api", tags=["Users"])
 
@@ -110,3 +111,19 @@ def delete_user(user_id: int, db: Session = Depends(get_db), admin=Depends(get_c
 def get_my_profile(current_user: User = Depends(get_current_user)):
     """The logged-in user's own profile - includes their balance, nothing about other users."""
     return current_user
+
+@router.post("/verify-password", response_model=VerifyPasswordResponse)
+def verify_password_endpoint(
+    data: VerifyPasswordRequest,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(data.password, user.password):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    return {"valid": True}

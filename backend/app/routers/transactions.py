@@ -12,10 +12,11 @@ Admin-only endpoints below also expose enriched transaction/fraud data
 (with names + phone numbers joined in) and summary stats for the dashboard.
 """
 
+from typing import Annotated, List
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import List
 
 from app.database import get_db
 from app.models.user import User
@@ -27,23 +28,45 @@ from app.routers.deps import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/api", tags=["Transactions"])
 
+OUTGOING_TYPES = {"TRANSFER", "CASH_OUT", "PAYMENT", "DEBIT"}
+INCOMING_TYPES = {"CASH_IN"}
 
-@router.post("/transactions", response_model=TransactionOut)
+
+@router.post(
+    "/transactions",
+    response_model=TransactionOut,
+    responses={
+        400: {"description": "Validation or balance error"},
+        404: {"description": "Counterparty account not found"},
+    },
+)
 def create_transaction(
     tx_in: TransactionCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    receiver = db.query(User).filter(User.phone_number == tx_in.receiver_phone).first()
-    if not receiver:
+    counterparty = db.query(User).filter(User.phone_number == tx_in.counterparty_phone).first()
+    if not counterparty:
         raise HTTPException(status_code=404, detail="No account found with this phone number")
-    if receiver.id == current_user.id:
-        raise HTTPException(status_code=400, detail="You cannot send money to your own account")
-    if current_user.balance < tx_in.amount:
-        raise HTTPException(status_code=400, detail="Insufficient balance")
 
-    old_balance_orig = current_user.balance
-    new_balance_orig = current_user.balance - tx_in.amount
+    if counterparty.id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot use your own account as the counterparty")
+
+    if tx_in.type in OUTGOING_TYPES:
+        sender = current_user
+        receiver = counterparty
+        if sender.balance < tx_in.amount:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
+    elif tx_in.type in INCOMING_TYPES:
+        sender = counterparty
+        receiver = current_user
+        if sender.balance < tx_in.amount:
+            raise HTTPException(status_code=400, detail="Counterparty account has insufficient balance")
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported transaction type")
+
+    old_balance_orig = sender.balance
+    new_balance_orig = sender.balance - tx_in.amount
     old_balance_dest = receiver.balance
     new_balance_dest = receiver.balance + tx_in.amount
 
@@ -54,7 +77,7 @@ def create_transaction(
     )
 
     transaction = Transaction(
-        sender_id=current_user.id,
+        sender_id=sender.id,
         receiver_id=receiver.id,
         amount=tx_in.amount,
         type=tx_in.type,
@@ -78,7 +101,7 @@ def create_transaction(
         db.add(fraud_log)
         db.commit()
     else:
-        current_user.balance = new_balance_orig
+        sender.balance = new_balance_orig
         receiver.balance = new_balance_dest
         db.commit()
 
@@ -86,7 +109,10 @@ def create_transaction(
 
 
 @router.get("/transactions/me")
-def my_transactions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def my_transactions(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
     """The logged-in user's own transaction history - sent and received, never anyone else's."""
     txs = (
         db.query(Transaction)
@@ -115,7 +141,10 @@ def my_transactions(db: Session = Depends(get_db), current_user: User = Depends(
 
 
 @router.get("/admin/transactions")
-def list_transactions(db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+def list_transactions(
+    db: Annotated[Session, Depends(get_db)],
+    admin: Annotated[object, Depends(get_current_admin)],
+):
     """Admin view - enriched with names/phone numbers so it's actually readable."""
     txs = db.query(Transaction).order_by(Transaction.timestamp.desc()).all()
     result = []
@@ -138,7 +167,10 @@ def list_transactions(db: Session = Depends(get_db), admin=Depends(get_current_a
 
 
 @router.get("/admin/fraud-logs")
-def list_fraud_logs(db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+def list_fraud_logs(
+    db: Annotated[Session, Depends(get_db)],
+    admin: Annotated[object, Depends(get_current_admin)],
+):
     logs = db.query(FraudLog).order_by(FraudLog.created_at.desc()).all()
     result = []
     for log in logs:
@@ -157,7 +189,10 @@ def list_fraud_logs(db: Session = Depends(get_db), admin=Depends(get_current_adm
 
 
 @router.get("/admin/stats")
-def get_stats(db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+def get_stats(
+    db: Annotated[Session, Depends(get_db)],
+    admin: Annotated[object, Depends(get_current_admin)],
+):
     """Summary numbers for the admin dashboard's stat cards + chart."""
     total_users = db.query(User).count()
     total_tx = db.query(Transaction).count()
