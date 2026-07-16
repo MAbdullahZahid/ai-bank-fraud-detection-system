@@ -1,0 +1,424 @@
+/* ============================================================
+   DESIGN TOKENS — "Ledger" system
+   A bank-ledger / security-terminal aesthetic: deep ink navy,
+   a gold seal accent (like an official bank stamp), serif
+   display type for authority, monospace for every number/ID.
+   ============================================================ */
+:root {
+  --bg: #0a0e16;
+  --surface: #121a29;
+  --surface-raised: #1a2436;
+  --border: #263149;
+  --border-soft: #1c2537;
+
+  --text-primary: #e9edf4;
+  --text-secondary: #8b96ac;
+  --text-faint: #5b6478;
+
+  --gold: #e0b34a;
+  --gold-soft: rgba(224, 179, 74, 0.14);
+  --gold-dim: #a9843a;
+
+  --success: #34b378;
+  --success-bg: rgba(52, 179, 120, 0.12);
+  --danger: #dd5a5f;
+  --danger-bg: rgba(221, 90, 95, 0.13);
+
+  --font-display: "Fraunces", serif;
+  --font-body: "Inter", -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(224, 179, 74, 0.05), transparent 40%),
+    radial-gradient(circle at 85% 90%, rgba(224, 179, 74, 0.04), transparent 40%);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ============ Layout ============ */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.container {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 0 24px;
+  width: 100%;
+}
+
+.page {
+  flex: 1;
+  padding: 56px 0 80px;
+}
+
+/* ============ Nav ============ */
+.nav {
+  border-bottom: 1px solid var(--border-soft);
+  padding: 20px 0;
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--gold);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--gold);
+}
+
+.nav-links {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.nav-links a, .nav-links button {
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.nav-links a:hover, .nav-links button:hover {
+  color: var(--text-primary);
+}
+
+.nav-links .active {
+  color: var(--gold);
+}
+
+/* ============ Headings ============ */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold-dim);
+  margin-bottom: 12px;
+}
+
+h1.page-title {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  line-height: 1.15;
+}
+
+p.page-subtitle {
+  color: var(--text-secondary);
+  font-size: 15px;
+  margin: 0 0 40px;
+  max-width: 520px;
+  line-height: 1.6;
+}
+
+/* ============ Card ============ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 32px;
+}
+
+.card + .card {
+  margin-top: 24px;
+}
+
+.card-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 20px;
+}
+
+/* ============ Form ============ */
+.field {
+  margin-bottom: 20px;
+}
+
+.field label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+}
+
+.field select,
+.field input {
+  width: 100%;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-family: var(--font-mono);
+  transition: border-color 0.15s ease;
+}
+
+.field select:focus,
+.field input:focus {
+  outline: none;
+  border-color: var(--gold-dim);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--gold);
+  color: #1a1405;
+  border: none;
+  border-radius: 6px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.15s ease, transform 0.1s ease;
+  font-family: var(--font-body);
+}
+
+.btn:hover {
+  background: #ecc061;
+}
+
+.btn:active {
+  transform: scale(0.99);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background: var(--surface-raised);
+}
+
+.error-banner {
+  background: var(--danger-bg);
+  border: 1px solid rgba(221, 90, 95, 0.3);
+  color: var(--danger);
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+/* ============ Stamp badge (signature element) ============ */
+.stamp-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 0 12px;
+}
+
+.stamp {
+  width: 148px;
+  height: 148px;
+  border-radius: 50%;
+  border: 3px double;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  transform: rotate(-9deg);
+  animation: stamp-in 0.35s cubic-bezier(0.2, 0.8, 0.3, 1.1);
+}
+
+@keyframes stamp-in {
+  from { transform: rotate(-9deg) scale(1.6); opacity: 0; }
+  to { transform: rotate(-9deg) scale(1); opacity: 1; }
+}
+
+.stamp.legit {
+  border-color: var(--success);
+  color: var(--success);
+  font-size: 20px;
+}
+
+.stamp.fraud {
+  border-color: var(--danger);
+  color: var(--danger);
+  font-size: 22px;
+}
+
+.stamp-meta {
+  margin-top: 20px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.stamp-meta strong {
+  color: var(--text-primary);
+}
+
+/* ============ Table ============ */
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+.tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tag.legit {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.tag.fraud {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* ============ Tabs ============ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.tab {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 10px 18px;
+  font-size: 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-family: var(--font-body);
+}
+
+.tab.active {
+  color: var(--gold);
+  border-bottom-color: var(--gold);
+}
+
+.empty-state {
+  color: var(--text-faint);
+  font-size: 14px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.helper-text {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin-top: -8px;
+  margin-bottom: 20px;
+}
