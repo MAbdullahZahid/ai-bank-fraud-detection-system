@@ -76,6 +76,8 @@ const SCENARIOS = [
   },
 ];
 
+
+
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 const KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 const PASSWORD_LENGTH = 6;
@@ -105,6 +107,7 @@ function ScenarioVisual({
   onKeyPress,
   onAtmConfirm,
   onAtmReset,
+  onBackspace,
 }) {
   const formattedAmount = amount ? Number(amount).toLocaleString() : "0";
   const { approvedLabel, statusClass } = getVisualStatus(scenario, result);
@@ -206,37 +209,51 @@ function ScenarioVisual({
                 <div className="atm-unit-label">CARD</div>
               </div>
 
-              <div className="atm-keypad-wrap">
-                <div className="atm-keypad">
-                  {KEYPAD_KEYS.map((key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      className="atm-key"
-                      disabled={isSettled}
-                      onClick={() => onKeyPress(key)}
-                      aria-label={key === "*" ? "Clear" : key === "#" ? "Backspace" : `Digit ${key}`}
-                    >
-                      {key}
-                    </button>
-                  ))}
-                </div>
+             <div className="atm-keypad-wrap">
+  <div className="atm-keypad">
+    {KEYPAD_KEYS.map((key) => (
+      <button
+        key={key}
+        type="button"
+        className="atm-key"
+        disabled={isSettled}
+        onClick={() => onKeyPress(key)}
+        aria-label={key === "*" ? "Clear all" : key === "#" ? "Backspace" : `Digit ${key}`}
+      >
+        {key}
+      </button>
+    ))}
+  </div>
 
-                {!isSettled ? (
-                  <button
-                    type="button"
-                    className="atm-ok-btn"
-                    disabled={okDisabled}
-                    onClick={onAtmConfirm}
-                  >
-                    {atmVerifying ? "CHECKING…" : atmStage === "password" ? "OK" : "OK · WITHDRAW"}
-                  </button>
-                ) : (
-                  <button type="button" className="atm-ok-btn atm-reset-btn" onClick={onAtmReset}>
-                    NEW TRANSACTION
-                  </button>
-                )}
-              </div>
+  {!isSettled && (
+    <div className="atm-controls-row">
+      <button
+        type="button"
+        className="atm-del-btn"
+        onClick={onBackspace}
+        disabled={atmStage === "password" ? atmPassword.length === 0 : amount.length === 0}
+        aria-label="Delete last character"
+      >
+        ✕ DEL
+      </button>
+    </div>
+  )}
+
+  {!isSettled ? (
+    <button
+      type="button"
+      className="atm-ok-btn"
+      disabled={okDisabled}
+      onClick={onAtmConfirm}
+    >
+      {atmVerifying ? "CHECKING…" : atmStage === "password" ? "OK" : "OK · WITHDRAW"}
+    </button>
+  ) : (
+    <button type="button" className="atm-ok-btn atm-reset-btn" onClick={onAtmReset}>
+      NEW TRANSACTION
+    </button>
+  )}
+</div>
 
               <div className="atm-cash-unit">
                 <div className={`atm-cash-slot ${isSettled && !isBlocked ? "dispensing" : ""}`}>
@@ -559,6 +576,16 @@ export default function Transfer() {
     setAmount((prev) => (prev.length < 9 ? prev + key : prev));
   };
 
+  const handleBackspace = () => {
+  if (atmStage === "password") {
+    setAtmPassword((prev) => prev.slice(0, -1));
+    setAtmError("");
+    return;
+  }
+  setAmount((prev) => prev.slice(0, -1));
+  setAtmError("");
+};
+
   const handleAtmConfirm = async () => {
     if (atmStage === "password") {
       if (atmPassword.length !== PASSWORD_LENGTH) {
@@ -760,6 +787,7 @@ export default function Transfer() {
                 onKeyPress={handleKeypadPress}
                 onAtmConfirm={handleAtmConfirm}
                 onAtmReset={resetAtm}
+                 onBackspace={handleBackspace}
               />
             </div>
 

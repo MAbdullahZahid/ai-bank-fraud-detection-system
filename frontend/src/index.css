@@ -2275,3 +2275,25 @@ tr:last-child td {
   display: flex;
   gap: 6px;
 }
+
+.atm-controls-row {
+  display: flex;
+  justify-content: center;
+}
+
+.atm-del-btn {
+  width: 100%;
+  padding: 8px 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 92, 77, 0.35);
+  background: rgba(255, 92, 77, 0.12);
+  color: #ff8c73;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.atm-del-btn:hover:not(:disabled) { background: rgba(255, 92, 77, 0.2); }
+.atm-del-btn:active:not(:disabled) { transform: scale(0.96); }
+.atm-del-btn:disabled { opacity: 0.35; cursor: not-allowed; }
