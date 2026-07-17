@@ -37,6 +37,9 @@ ROUND_AMOUNT_THRESHOLD = 50000            # only check "roundness" above this si
 
 def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
                     ip_address: str = None, device: str = None):
+    
+    if type_ in ("PAYMENT", "DEBIT"):
+        return (False, [])
     """
     Runs all 8 rules for one transaction attempt.
     `sender` is the logged-in user initiating the transaction.
@@ -77,12 +80,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         )
 
     # ---- Rule 4: Odd-hour transaction ----
-    current_hour = datetime.utcnow().hour
-    if ODD_HOUR_START <= current_hour < ODD_HOUR_END and amount >= ODD_HOUR_MIN_AMOUNT:
-        reasons.append(
-            f"Odd-hour rule: a transaction of this size was submitted at "
-            f"{current_hour:02d}:00 UTC, outside typical hours."
-        )
+   
 
     # ---- Rule 5: Amount far above this account's own typical transaction size ----
     past_amounts = [

@@ -2332,3 +2332,25 @@ tr:last-child td {
   line-height: 1.4;
   color: rgba(0, 0, 0, 0.75);
 }
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 8px;
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.atm-ok-btn.loading {
+  opacity: .85;
+  cursor: wait;
+}

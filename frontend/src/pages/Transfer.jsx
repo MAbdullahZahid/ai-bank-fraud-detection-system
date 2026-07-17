@@ -94,6 +94,7 @@ function ScenarioVisual({
   atmPassword,
   atmError,
   atmVerifying,
+  loading,
   onKeyPress,
   onAtmConfirm,
   onAtmReset,
@@ -104,6 +105,7 @@ function ScenarioVisual({
   const isBlocked = result?.prediction === "fraud";
   const isSettled = Boolean(result);
   const isAmountStage = atmStage === "amount";
+   const isBusy = atmVerifying || loading;
 
   const okDisabled =
     scenario.scene === "atm" &&
@@ -182,13 +184,15 @@ function ScenarioVisual({
                 )}
 
                 <div className="atm-screen-msg">
-                  {atmStage === "password" && !atmError && "ENTER 6-DIGIT PASSWORD"}
-                  {atmStage === "password" && atmError && atmError}
-                  {isAmountStage && !isSettled && !atmError && "ENTER AMOUNT, THEN PRESS OK"}
-                  {isAmountStage && !isSettled && atmError && atmError}
-                  {isSettled && !isBlocked && "PLEASE TAKE YOUR CASH"}
-                  {isSettled && isBlocked && "TRANSACTION DECLINED"}
-                </div>
+  {atmStage === "password" && atmVerifying && "CHECKING PASSWORD…"}
+  {atmStage === "password" && !atmVerifying && !atmError && "ENTER 6-DIGIT PASSWORD"}
+  {atmStage === "password" && !atmVerifying && atmError && atmError}
+  {isAmountStage && loading && "PROCESSING WITHDRAWAL…"}
+  {isAmountStage && !loading && !isSettled && !atmError && "ENTER AMOUNT, THEN PRESS OK"}
+  {isAmountStage && !loading && !isSettled && atmError && atmError}
+  {isSettled && !isBlocked && "PLEASE TAKE YOUR CASH"}
+  {isSettled && isBlocked && "TRANSACTION DECLINED"}
+</div>
               </div>
             </div>
 
@@ -206,7 +210,7 @@ function ScenarioVisual({
         key={key}
         type="button"
         className="atm-key"
-        disabled={isSettled}
+        disabled={isSettled || isBusy}
         onClick={() => onKeyPress(key)}
         aria-label={key === "*" ? "Clear all" : key === "#" ? "Backspace" : `Digit ${key}`}
       >
@@ -215,34 +219,31 @@ function ScenarioVisual({
     ))}
   </div>
 
-  {!isSettled && (
-    <div className="atm-controls-row">
-      <button
-        type="button"
-        className="atm-del-btn"
-        onClick={onBackspace}
-        disabled={atmStage === "password" ? atmPassword.length === 0 : amount.length === 0}
-        aria-label="Delete last character"
-      >
-        ✕ DEL
-      </button>
-    </div>
-  )}
-
-  {!isSettled ? (
+ {!isSettled && (
+  <div className="atm-controls-row">
     <button
       type="button"
-      className="atm-ok-btn"
-      disabled={okDisabled}
-      onClick={onAtmConfirm}
+      className="atm-del-btn"
+      onClick={onBackspace}
+      disabled={isBusy || (atmStage === "password" ? atmPassword.length === 0 : amount.length === 0)}
+      aria-label="Delete last character"
     >
-      {atmVerifying ? "CHECKING…" : atmStage === "password" ? "OK" : "OK · WITHDRAW"}
+      ✕ DEL
     </button>
-  ) : (
-    <button type="button" className="atm-ok-btn atm-reset-btn" onClick={onAtmReset}>
-      NEW TRANSACTION
-    </button>
-  )}
+  </div>
+)}
+
+ {!isSettled ? (
+  <button type="button" className="atm-ok-btn" disabled={okDisabled} onClick={onAtmConfirm}>
+    {isBusy
+      ? (atmStage === "password" ? "CHECKING…" : "PROCESSING…")
+      : atmStage === "password" ? "OK" : "OK · WITHDRAW"}
+  </button>
+) : (
+  <button type="button" className="atm-ok-btn atm-reset-btn" onClick={onAtmReset}>
+    NEW TRANSACTION
+  </button>
+)}
 </div>
 
               <div className="atm-cash-unit">
@@ -842,6 +843,7 @@ const getFraudReason = (transactionId) => {
                 atmPassword={atmPassword}
                 atmError={atmError}
                 atmVerifying={atmVerifying}
+                loading={loading}
                 onKeyPress={handleKeypadPress}
                 onAtmConfirm={handleAtmConfirm}
                 onAtmReset={resetAtm}
