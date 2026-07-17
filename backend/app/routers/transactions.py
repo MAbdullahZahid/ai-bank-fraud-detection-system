@@ -162,8 +162,12 @@ def create_transaction(
             transaction_type=tx_in.type, amount=tx_in.amount,
             is_fraud=False, probability=probability,
         )
-    current_user.last_ip = ip_address
-    current_user.last_device = device
+    
+    sender.last_ip = ip_address
+    sender.last_device = device
+
+    print("IP:", ip_address)
+    print("Device:", device)
     db.commit()    
 
     return transaction

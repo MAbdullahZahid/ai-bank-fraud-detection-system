@@ -35,12 +35,7 @@ const SCENARIOS = [
     description: "Pick a merchant to pay, like a real point-of-sale checkout.",
     outcome: "Ideal for legal payment scenarios that should look clean.",
     counterpartyLabel: "Merchant",
-    defaultCounterparty: "03009991001",
-    counterpartyOptions: [
-      { name: "Careem", phone: "03009991001" },
-      { name: "Foodpanda", phone: "03009991002" },
-      { name: "Daraz", phone: "03009991003" },
-    ],
+    optionsSource: "merchants",
     direction: "outgoing",
     accent: "legit",
     scene: "payment",
@@ -64,12 +59,7 @@ const SCENARIOS = [
     description: "Pick a biller - a recurring bill is deducted automatically.",
     outcome: "Useful for bank fees, utilities, and scheduled deductions.",
     counterpartyLabel: "Biller",
-    defaultCounterparty: "03009992001",
-    counterpartyOptions: [
-      { name: "K-Electric", phone: "03009992001" },
-      { name: "PTCL Internet", phone: "03009992002" },
-      { name: "Sui Gas", phone: "03009992003" },
-    ],
+    optionsSource: "billers",
     direction: "outgoing",
     accent: "legit",
     scene: "debit",
@@ -449,6 +439,10 @@ export default function Transfer() {
   const [disputeMsg, setDisputeMsg] = useState("");
   const [myFraudLogs, setMyFraudLogs] = useState([]);
 
+  // Merchants / billers, fetched from the backend instead of hardcoded
+  const [merchants, setMerchants] = useState([]);
+  const [billers, setBillers] = useState([]);
+
   // ATM-specific state
   const [atmStage, setAtmStage] = useState("password"); // "password" | "amount"
   const [atmPassword, setAtmPassword] = useState("");
@@ -457,6 +451,17 @@ export default function Transfer() {
 
   const scenario = useMemo(() => SCENARIOS.find((item) => item.type === type) || SCENARIOS[0], [type]);
   const isAtm = scenario.type === "CASH_OUT";
+
+  // The live options list for whichever scenario is selected (merchants, billers, or none)
+  const counterpartyOptions = useMemo(() => {
+    if (scenario.optionsSource === "merchants") {
+      return merchants.map((m) => ({ name: m.full_name, phone: m.phone_number }));
+    }
+    if (scenario.optionsSource === "billers") {
+      return billers.map((b) => ({ name: b.full_name, phone: b.phone_number }));
+    }
+    return null;
+  }, [scenario.optionsSource, merchants, billers]);
 
   const clearSession = () => {
     localStorage.removeItem("user_token");
@@ -504,6 +509,20 @@ export default function Transfer() {
     .catch(() => {});
 };
 
+  const loadMerchants = () => {
+    api
+      .get("/api/merchants", { headers: authHeader("user") })
+      .then((res) => setMerchants(res.data))
+      .catch(() => {});
+  };
+
+  const loadBillers = () => {
+    api
+      .get("/api/billers", { headers: authHeader("user") })
+      .then((res) => setBillers(res.data))
+      .catch(() => {});
+  };
+
   const submitDispute = async (transactionId) => {
     if (!disputeReason.trim() || disputeReason.trim().length < 5) {
       setDisputeMsg("Please enter at least 5 characters explaining why this should be reviewed.");
@@ -538,6 +557,8 @@ export default function Transfer() {
   loadHistory();
   loadDisputes();
   loadFraudLogs();
+  loadMerchants();
+  loadBillers();
 }, [navigate]);
 
   const resetAtm = () => {
@@ -551,11 +572,33 @@ export default function Transfer() {
   };
 
   useEffect(() => {
-    setCounterpartyPhone(scenario.defaultCounterparty);
+    if (scenario.optionsSource) {
+      // Merchant/biller scenarios pick their counterparty from fetched data
+      const list = scenario.optionsSource === "merchants" ? merchants : billers;
+      setCounterpartyPhone(list[0]?.phone_number || "");
+    } else {
+      setCounterpartyPhone(scenario.defaultCounterparty);
+    }
     setErrors({});
     resetAtm();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenario.defaultCounterparty]);
+  }, [scenario.type]);
+
+  // If the merchants/billers list loads after the scenario is already selected,
+  // make sure a valid counterparty gets picked once data arrives.
+  useEffect(() => {
+    if (scenario.optionsSource !== "merchants") return;
+    if (!counterpartyPhone && merchants.length > 0) {
+      setCounterpartyPhone(merchants[0].phone_number);
+    }
+  }, [merchants, scenario.optionsSource, counterpartyPhone]);
+
+  useEffect(() => {
+    if (scenario.optionsSource !== "billers") return;
+    if (!counterpartyPhone && billers.length > 0) {
+      setCounterpartyPhone(billers[0].phone_number);
+    }
+  }, [billers, scenario.optionsSource, counterpartyPhone]);
 
   const handleKeypadPress = (key) => {
     if (atmStage === "password") {
@@ -773,7 +816,6 @@ const getFraudReason = (transactionId) => {
                     className={`scenario-tile ${type === item.type ? "active" : ""}`}
                     onClick={() => {
                       setType(item.type);
-                      setCounterpartyPhone(item.defaultCounterparty);
                       setResult(null);
                       setApiError("");
                     }}
@@ -822,19 +864,25 @@ const getFraudReason = (transactionId) => {
                   <div className={`field ${errors.counterpartyPhone ? "has-error" : ""}`}>
                     <label>{scenario.counterpartyLabel}</label>
 
-                    {scenario.counterpartyOptions ? (
-                      <div className="option-list">
-                        {scenario.counterpartyOptions.map((opt) => (
-                          <button
-                            key={opt.phone}
-                            type="button"
-                            className={`option-pill ${counterpartyPhone === opt.phone ? "active" : ""}`}
-                            onClick={() => setCounterpartyPhone(opt.phone)}
-                          >
-                            {opt.name}
-                          </button>
-                        ))}
-                      </div>
+                    {counterpartyOptions ? (
+                      counterpartyOptions.length === 0 ? (
+                        <div className="helper-text">
+                          No {scenario.counterpartyLabel.toLowerCase()}s available yet.
+                        </div>
+                      ) : (
+                        <div className="option-list">
+                          {counterpartyOptions.map((opt) => (
+                            <button
+                              key={opt.phone}
+                              type="button"
+                              className={`option-pill ${counterpartyPhone === opt.phone ? "active" : ""}`}
+                              onClick={() => setCounterpartyPhone(opt.phone)}
+                            >
+                              {opt.name}
+                            </button>
+                          ))}
+                        </div>
+                      )
                     ) : (
                       <input
                         id="counterparty-phone"
