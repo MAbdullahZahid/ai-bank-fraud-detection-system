@@ -2228,3 +2228,50 @@ tr:last-child td {
   color: #fff;
   font-weight: 600;
 }
+
+.dispute-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.dispute-status.pending {
+  background: var(--gold-soft);
+  color: var(--gold);
+}
+
+.dispute-status.approved {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.dispute-status.rejected {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.dispute-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+}
+
+.dispute-form textarea {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  resize: vertical;
+}
+
+.dispute-form-actions {
+  display: flex;
+  gap: 6px;
+}

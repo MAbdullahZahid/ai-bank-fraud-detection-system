@@ -372,6 +372,48 @@ function ScenarioVisual({
   );
 }
 
+function DisputeCell({
+  item, disputes, disputingId, disputeReason, disputeMsg, disputeSubmitting,
+  onStart, onChange, onSubmit, onCancel,
+}) {
+  if (item.prediction !== "fraud" || item.direction !== "sent") {
+    return <span className="helper-text">—</span>;
+  }
+
+  const dispute = disputes.find((d) => d.transaction_id === item.id);
+  if (dispute) {
+    return <span className={`dispute-status ${dispute.status}`}>{dispute.status}</span>;
+  }
+
+  if (disputingId === item.id) {
+    return (
+      <div className="dispute-form">
+        <textarea
+          value={disputeReason}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Why should this be reviewed?"
+          rows={2}
+        />
+        {disputeMsg && <div className="field-error">{disputeMsg}</div>}
+        <div className="dispute-form-actions">
+          <button type="button" className="icon-btn" onClick={() => onSubmit(item.id)} disabled={disputeSubmitting}>
+            {disputeSubmitting ? "Submitting…" : "Submit"}
+          </button>
+          <button type="button" className="icon-btn" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button type="button" className="icon-btn danger" onClick={() => onStart(item.id)}>
+      Dispute
+    </button>
+  );
+}
+
 export default function Transfer() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
@@ -383,6 +425,11 @@ export default function Transfer() {
   const [apiError, setApiError] = useState("");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [myDisputes, setMyDisputes] = useState([]);
+  const [disputingId, setDisputingId] = useState(null);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeSubmitting, setDisputeSubmitting] = useState(false);
+  const [disputeMsg, setDisputeMsg] = useState("");
 
   // ATM-specific state
   const [atmStage, setAtmStage] = useState("password"); // "password" | "amount"
@@ -425,6 +472,38 @@ export default function Transfer() {
       .catch(() => {});
   };
 
+  const loadDisputes = () => {
+    api
+      .get("/api/disputes/me", { headers: authHeader("user") })
+      .then((res) => setMyDisputes(res.data))
+      .catch(() => {});
+  };
+
+  const submitDispute = async (transactionId) => {
+    if (!disputeReason.trim() || disputeReason.trim().length < 5) {
+      setDisputeMsg("Please enter at least 5 characters explaining why this should be reviewed.");
+      return;
+    }
+    setDisputeSubmitting(true);
+    setDisputeMsg("");
+    try {
+      await api.post(
+        `/api/transactions/${transactionId}/dispute`,
+        { reason: disputeReason.trim() },
+        { headers: authHeader("user") }
+      );
+      setDisputingId(null);
+      setDisputeReason("");
+      loadDisputes();
+    } catch (err) {
+      setDisputeMsg(err.response?.data?.detail || "Could not submit dispute.");
+    } finally {
+      setDisputeSubmitting(false);
+    }
+  };
+
+  
+
   useEffect(() => {
     if (!localStorage.getItem("user_token")) {
       navigate("/login");
@@ -432,6 +511,7 @@ export default function Transfer() {
     }
     loadProfile();
     loadHistory();
+    loadDisputes();
   }, [navigate]);
 
   const resetAtm = () => {
@@ -782,6 +862,7 @@ export default function Transfer() {
                     <th>Amount</th>
                     <th>Result</th>
                     <th>Time</th>
+                    <th>Dispute</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -799,6 +880,28 @@ export default function Transfer() {
                         <span className={`tag ${item.prediction === "fraud" ? "fraud" : "legit"}`}>
                           {item.prediction}
                         </span>
+                      </td>
+                      <td>
+                        <DisputeCell
+                          item={item}
+                          disputes={myDisputes}
+                          disputingId={disputingId}
+                          disputeReason={disputeReason}
+                          disputeMsg={disputeMsg}
+                          disputeSubmitting={disputeSubmitting}
+                          onStart={(id) => {
+                            setDisputingId(id);
+                            setDisputeReason("");
+                            setDisputeMsg("");
+                          }}
+                          onChange={setDisputeReason}
+                          onSubmit={submitDispute}
+                          onCancel={() => {
+                            setDisputingId(null);
+                            setDisputeReason("");
+                            setDisputeMsg("");
+                          }}
+                        />
                       </td>
                       <td>{new Date(item.timestamp).toLocaleString()}</td>
                     </tr>

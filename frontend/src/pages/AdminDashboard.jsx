@@ -14,6 +14,7 @@ export default function AdminDashboard() {
   const [transactions, setTransactions] = useState([]);
   const [fraudLogs, setFraudLogs] = useState([]);
   const [error, setError] = useState("");
+  const [disputes, setDisputes] = useState([]);
 
   // Add-user form
   const [form, setForm] = useState({ full_name: "", email: "", phone_number: "", password: "", balance: "" });
@@ -58,12 +59,29 @@ export default function AdminDashboard() {
     }
   };
 
+  const resolveDispute = async (disputeId, approve) => {
+    const notes = window.prompt(
+      approve ? "Optional note for approving this dispute:" : "Optional note for rejecting this dispute:"
+    ) || "";
+    try {
+      await api.post(
+        `/api/admin/disputes/${disputeId}/resolve`,
+        { approve, admin_notes: notes },
+        { headers: authHeader("admin") }
+      );
+      loadAll();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Could not resolve dispute.");
+    }
+  };
+
   const loadAll = () => {
     const headers = { headers: authHeader("admin") };
     api.get("/api/admin/stats", headers).then((r) => setStats(r.data)).catch(handleAuthError);
     api.get("/api/admin/users", headers).then((r) => setUsers(r.data)).catch(handleAuthError);
     api.get("/api/admin/transactions", headers).then((r) => setTransactions(r.data)).catch(handleAuthError);
     api.get("/api/admin/fraud-logs", headers).then((r) => setFraudLogs(r.data)).catch(handleAuthError);
+    api.get("/api/admin/disputes", headers).then((r) => setDisputes(r.data)).catch(handleAuthError);
   };
 
   // ---------- Add user ----------
@@ -270,6 +288,9 @@ export default function AdminDashboard() {
           </button>
           <button className={`tab ${tab === "fraud" ? "active" : ""}`} onClick={() => setTab("fraud")}>
             Fraud logs ({fraudLogs.length})
+          </button>
+          <button className={`tab ${tab === "disputes" ? "active" : ""}`} onClick={() => setTab("disputes")}>
+            Disputes ({disputes.filter((d) => d.status === "pending").length})
           </button>
         </div>
 
@@ -512,6 +533,62 @@ export default function AdminDashboard() {
                         <td>{f.threshold}</td>
                         <td style={{ whiteSpace: "normal", fontFamily: "var(--font-body)" }}>{f.reason}</td>
                         <td>{new Date(f.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+        {tab === "disputes" && (
+          <div className="card">
+            <div className="card-title">Disputed transactions</div>
+            {disputes.length === 0 ? (
+              <div className="empty-state">No disputes yet.</div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Customer</th>
+                      <th>Transaction</th>
+                      <th>Reason</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {disputes.map((d) => (
+                      <tr key={d.id}>
+                        <td>#{d.id}</td>
+                        <td>{d.customer_name} ({d.customer_phone})</td>
+                        <td>
+                          #{d.transaction_id} — {d.type}, Rs {Number(d.amount).toLocaleString()}
+                          <br />
+                          <span className="helper-text">score: {d.fraud_probability?.toFixed(4)}</span>
+                        </td>
+                        <td style={{ whiteSpace: "normal", fontFamily: "var(--font-body)" }}>
+                          {d.customer_reason}
+                        </td>
+                        <td>
+                          <span className={`dispute-status ${d.status}`}>{d.status}</span>
+                        </td>
+                        <td>
+                          {d.status === "pending" ? (
+                            <div className="row-actions">
+                              <button className="icon-btn" onClick={() => resolveDispute(d.id, true)}>
+                                Approve
+                              </button>
+                              <button className="icon-btn danger" onClick={() => resolveDispute(d.id, false)}>
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="helper-text">{d.admin_notes || "—"}</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
