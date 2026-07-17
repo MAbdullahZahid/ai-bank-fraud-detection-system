@@ -312,17 +312,7 @@ https://www.kaggle.com/datasets/ealaxi/paysim1
 
 ---
 
-# Screenshots
 
-Add screenshots of:
-
-- Login
-- Dashboard
-- Money Transfer
-- ATM
-- Fraud Detection
-- Admin Dashboard
-- Fraud Logs
 
 ---
 
@@ -336,7 +326,6 @@ Backend | AI | Machine Learning
 
 GitHub: https://github.com/MAbdullahZahid
 
-LinkedIn: https://www.linkedin.com/
 
 ---
 
