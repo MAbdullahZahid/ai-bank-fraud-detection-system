@@ -249,6 +249,33 @@ def list_fraud_logs(
     return result
 
 
+@router.get("/fraud-logs/me")
+def list_my_fraud_logs(
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[object, Depends(get_current_user)],
+):
+    logs = (
+        db.query(FraudLog)
+        .join(Transaction, Transaction.id == FraudLog.transaction_id)
+        .filter(Transaction.sender_id == user.id)
+        .order_by(FraudLog.created_at.desc())
+        .all()
+    )
+    result = []
+    for log in logs:
+        tx = db.query(Transaction).filter(Transaction.id == log.transaction_id).first()
+        result.append({
+            "id": log.id,
+            "transaction_id": log.transaction_id,
+            "model_score": log.model_score,
+            "threshold": log.threshold,
+            "reason": log.reason,
+            "created_at": log.created_at,
+            "amount": tx.amount if tx else None,
+            "type": tx.type if tx else None,
+        })
+    return result
+
 @router.get("/admin/stats")
 def get_stats(
     db: Annotated[Session, Depends(get_db)],

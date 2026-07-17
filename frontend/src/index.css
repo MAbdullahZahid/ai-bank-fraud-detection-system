@@ -2297,3 +2297,38 @@ tr:last-child td {
 .atm-del-btn:hover:not(:disabled) { background: rgba(255, 92, 77, 0.2); }
 .atm-del-btn:active:not(:disabled) { transform: scale(0.96); }
 .atm-del-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  max-width: 100%;
+}
+
+.table-wrap table {
+  width: 100%;
+  min-width: 900px; /* forces horizontal scroll instead of column squeeze */
+  border-collapse: collapse;
+}
+
+.table-wrap th,
+.table-wrap td {
+  padding: 12px 14px;
+  vertical-align: top;
+  text-align: left;
+}
+
+/* Give every column a sane minimum so nothing overlaps */
+.table-wrap th:nth-child(1), .table-wrap td:nth-child(1) { min-width: 90px; }  /* Direction */
+.table-wrap th:nth-child(2), .table-wrap td:nth-child(2) { min-width: 200px; white-space: normal; } /* With */
+.table-wrap th:nth-child(3), .table-wrap td:nth-child(3) { min-width: 90px; }  /* Type */
+.table-wrap th:nth-child(4), .table-wrap td:nth-child(4) { min-width: 110px; } /* Amount */
+.table-wrap th:nth-child(5), .table-wrap td:nth-child(5) { min-width: 90px; }  /* Result */
+.table-wrap th:nth-child(6), .table-wrap td:nth-child(6) { min-width: 220px; max-width: 280px; white-space: normal; word-wrap: break-word; } /* Reason */
+.table-wrap th:nth-child(7), .table-wrap td:nth-child(7) { min-width: 160px; } /* Time */
+.table-wrap th:nth-child(8), .table-wrap td:nth-child(8) { min-width: 130px; } /* Dispute */
+
+.reason-cell {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: rgba(0, 0, 0, 0.75);
+}

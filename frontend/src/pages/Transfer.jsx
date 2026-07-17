@@ -447,6 +447,7 @@ export default function Transfer() {
   const [disputeReason, setDisputeReason] = useState("");
   const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const [disputeMsg, setDisputeMsg] = useState("");
+  const [myFraudLogs, setMyFraudLogs] = useState([]);
 
   // ATM-specific state
   const [atmStage, setAtmStage] = useState("password"); // "password" | "amount"
@@ -496,6 +497,13 @@ export default function Transfer() {
       .catch(() => {});
   };
 
+  const loadFraudLogs = () => {
+  api
+    .get("/api/fraud-logs/me", { headers: authHeader("user") })
+    .then((res) => setMyFraudLogs(res.data))
+    .catch(() => {});
+};
+
   const submitDispute = async (transactionId) => {
     if (!disputeReason.trim() || disputeReason.trim().length < 5) {
       setDisputeMsg("Please enter at least 5 characters explaining why this should be reviewed.");
@@ -522,14 +530,15 @@ export default function Transfer() {
   
 
   useEffect(() => {
-    if (!localStorage.getItem("user_token")) {
-      navigate("/login");
-      return;
-    }
-    loadProfile();
-    loadHistory();
-    loadDisputes();
-  }, [navigate]);
+  if (!localStorage.getItem("user_token")) {
+    navigate("/login");
+    return;
+  }
+  loadProfile();
+  loadHistory();
+  loadDisputes();
+  loadFraudLogs();
+}, [navigate]);
 
   const resetAtm = () => {
     setAtmStage("password");
@@ -644,12 +653,18 @@ export default function Transfer() {
       setResult(res.data);
       loadProfile();
       loadHistory();
+      loadFraudLogs();
     } catch (err) {
       setApiError(err.response?.data?.detail || "Something went wrong submitting this transaction.");
     } finally {
       setLoading(false);
     }
   };
+
+const getFraudReason = (transactionId) => {
+  const log = myFraudLogs.find((f) => f.transaction_id === transactionId);
+  return log?.reason || null;
+};
 
   const validate = () => {
     const nextErrors = {};
@@ -697,6 +712,7 @@ export default function Transfer() {
       setAmount("");
       loadProfile();
       loadHistory();
+      loadFraudLogs();
     } catch (err) {
       setApiError(err.response?.data?.detail || "Something went wrong submitting this transaction.");
     } finally {
@@ -881,61 +897,65 @@ export default function Transfer() {
             <div className="empty-state">No transactions yet.</div>
           ) : (
             <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Direction</th>
-                    <th>With</th>
-                    <th>Type</th>
-                    <th>Amount</th>
-                    <th>Result</th>
-                    <th>Time</th>
-                    <th>Dispute</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((item) => (
-                    <tr key={item.id}>
-                      <td>
-                        <span className={`direction-tag ${item.direction}`}>{item.direction}</span>
-                      </td>
-                      <td>
-                        {item.counterpart_name} ({item.counterpart_phone})
-                      </td>
-                      <td>{item.type}</td>
-                      <td>Rs {Number(item.amount).toLocaleString()}</td>
-                      <td>
-                        <span className={`tag ${item.prediction === "fraud" ? "fraud" : "legit"}`}>
-                          {item.prediction}
-                        </span>
-                      </td>
-                      <td>
-                        <DisputeCell
-                          item={item}
-                          disputes={myDisputes}
-                          disputingId={disputingId}
-                          disputeReason={disputeReason}
-                          disputeMsg={disputeMsg}
-                          disputeSubmitting={disputeSubmitting}
-                          onStart={(id) => {
-                            setDisputingId(id);
-                            setDisputeReason("");
-                            setDisputeMsg("");
-                          }}
-                          onChange={setDisputeReason}
-                          onSubmit={submitDispute}
-                          onCancel={() => {
-                            setDisputingId(null);
-                            setDisputeReason("");
-                            setDisputeMsg("");
-                          }}
-                        />
-                      </td>
-                      <td>{new Date(item.timestamp).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+             <table>
+  <thead>
+    <tr>
+      <th>Direction</th>
+      <th>With</th>
+      <th>Type</th>
+      <th>Amount</th>
+      <th>Result</th>
+      <th>Reason</th>
+      <th>Dispute</th>
+      <th>Date & Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {history.map((item) => (
+      <tr key={item.id}>
+        <td>
+          <span className={`direction-tag ${item.direction}`}>{item.direction}</span>
+        </td>
+        <td>
+          {item.counterpart_name} ({item.counterpart_phone})
+        </td>
+        <td>{item.type}</td>
+        <td>Rs {Number(item.amount).toLocaleString()}</td>
+        <td>
+          <span className={`tag ${item.prediction === "fraud" ? "fraud" : "legit"}`}>
+            {item.prediction}
+          </span>
+        </td>
+        <td className="reason-cell">
+          {item.prediction === "fraud" ? (getFraudReason(item.id) || "Flagged by fraud model") : "—"}
+        </td>
+        <td>
+          <DisputeCell
+            item={item}
+            disputes={myDisputes}
+            disputingId={disputingId}
+            disputeReason={disputeReason}
+            disputeMsg={disputeMsg}
+            disputeSubmitting={disputeSubmitting}
+            onStart={(id) => {
+              setDisputingId(id);
+              setDisputeReason("");
+              setDisputeMsg("");
+            }}
+            onChange={setDisputeReason}
+            onSubmit={submitDispute}
+            onCancel={() => {
+              setDisputingId(null);
+              setDisputeReason("");
+              setDisputeMsg("");
+            }}
+          />
+        </td>
+        <td>{new Date(item.timestamp).toLocaleString()}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
             </div>
           )}
         </div>

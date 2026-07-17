@@ -15,6 +15,7 @@ export default function AdminDashboard() {
   const [fraudLogs, setFraudLogs] = useState([]);
   const [error, setError] = useState("");
   const [disputes, setDisputes] = useState([]);
+  
 
   // Add-user form
   const [form, setForm] = useState({ full_name: "", email: "", phone_number: "", password: "", balance: "" });
