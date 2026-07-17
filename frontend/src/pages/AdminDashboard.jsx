@@ -347,14 +347,31 @@ export default function AdminDashboard() {
   const resolveDispute = async (disputeId, approve) => {
     const notes = window.prompt(
       approve ? "Optional note for approving this dispute:" : "Optional note for rejecting this dispute:"
-    ) || "";
+    );
+    if (notes === null) return; // admin hit Cancel on the prompt - don't resolve anything
     setDisputeActionError("");
     try {
-      await api.post(
+      const res = await api.post(
         `/api/admin/disputes/${disputeId}/resolve`,
         { approve, admin_notes: notes },
         { headers: authHeader("admin") }
       );
+      // Update this dispute in local state right away so the table reflects
+      // the new status instantly, instead of waiting on loadAll()'s refetch
+      // (which can otherwise show the old status until the page is refreshed).
+      setDisputes((prev) =>
+        prev.map((d) =>
+          d.id === disputeId
+            ? {
+                ...d,
+                status: res.data?.status || (approve ? "approved" : "rejected"),
+                admin_notes: res.data?.admin_notes ?? notes,
+              }
+            : d
+        )
+      );
+      // Still reload everything else (stats, balances, transactions, etc.)
+      // that may have changed as a result of resolving the dispute.
       loadAll();
     } catch (err) {
       setDisputeActionError(err.response?.data?.detail || "Could not resolve dispute.");
