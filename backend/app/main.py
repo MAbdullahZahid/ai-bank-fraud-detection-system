@@ -9,6 +9,7 @@ from app.routers import disputes
 
 from app.database import init_db
 from app.routers import auth, users, transactions
+from app.routers import payees
 
 app = FastAPI(title="AI-Based Bank Fraud Detection System")
 
@@ -32,6 +33,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(transactions.router)
 app.include_router(disputes.router)
+app.include_router(payees.router)
 
 
 @app.get("/")

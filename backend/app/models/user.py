@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -15,3 +15,5 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_ip = Column(String(45), nullable=True)
     last_device = Column(String(255), nullable=True)
+    is_merchant = Column(Boolean, nullable=False, default=False)
+    is_biller = Column(Boolean, nullable=False, default=False)

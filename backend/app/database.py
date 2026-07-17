@@ -67,21 +67,6 @@ def _seed_demo_accounts():
         {"full_name": "Deposit Agent", "email": "depositagent@gmail.com",
          "phone_number": "03009990003", "balance": 999999999},
 
-        # Merchants (Payment scenario - customer picks one of these by name)
-        {"full_name": "Careem", "email": "careem@gmail.com ",
-         "phone_number": "03009991001", "balance": 500000},
-        {"full_name": "Foodpanda", "email": "foodpanda@gmail.com",
-         "phone_number": "03009991002", "balance": 500000},
-        {"full_name": "Daraz", "email": "daraz@gmail.com",
-         "phone_number": "03009991003", "balance": 500000},
-
-        # Billers (Auto Debit scenario - customer picks one of these by name)
-        {"full_name": "K-Electric", "email": "kelectric@gmail.com",
-         "phone_number": "03009992001", "balance": 500000},
-        {"full_name": "PTCL Internet", "email": "ptcl@gmail.com",
-         "phone_number": "03009992002", "balance": 500000},
-        {"full_name": "Sui Gas", "email": "suigas@gmail.com",
-         "phone_number": "03009992003", "balance": 500000},
     ]
 
     db = SessionLocal()

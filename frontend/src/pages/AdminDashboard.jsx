@@ -5,6 +5,284 @@ import api, { authHeader } from "../api";
 
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 
+const isValidEmail = (value) => (value || "").includes("@") && (value || "").includes(".");
+
+// ==========================================================
+// Reusable Merchant / Biller manager (add + inline edit + delete)
+// ==========================================================
+function PayeeSection({ kind, title, items, onReload, setError }) {
+  // kind: "merchant" | "biller" -> endpoint is /api/admin/{kind}s
+  const endpoint = `${kind}s`;
+
+  const [form, setForm] = useState({ full_name: "", email: "", phone_number: "", starting_balance: "" });
+  const [formErrors, setFormErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [formMsg, setFormMsg] = useState("");
+
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [editErrors, setEditErrors] = useState({});
+
+  const validateForm = () => {
+    const errs = {};
+    if (!form.full_name.trim() || form.full_name.trim().length < 2) {
+      errs.full_name = "Name must be at least 2 characters.";
+    }
+    if (!isValidEmail(form.email.trim())) {
+      errs.email = "Enter a valid email address.";
+    }
+    if (!PHONE_REGEX.test(form.phone_number.trim())) {
+      errs.phone_number = "Enter a valid phone number (7-15 digits).";
+    }
+    if (form.starting_balance !== "" && Number(form.starting_balance) < 0) {
+      errs.starting_balance = "Balance cannot be negative.";
+    }
+    setFormErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const submitPayee = async (e) => {
+    e.preventDefault();
+    setFormMsg("");
+    if (!validateForm()) return;
+
+    setSubmitting(true);
+    try {
+      await api.post(
+        `/api/admin/${endpoint}`,
+        {
+          full_name: form.full_name.trim(),
+          email: form.email.trim(),
+          phone_number: form.phone_number.trim(),
+          starting_balance: Number(form.starting_balance) || 0,
+        },
+        { headers: authHeader("admin") }
+      );
+      setForm({ full_name: "", email: "", phone_number: "", starting_balance: "" });
+      setFormMsg(`${kind === "merchant" ? "Merchant" : "Biller"} added.`);
+      onReload();
+    } catch (err) {
+      setFormMsg(err.response?.data?.detail || `Could not create ${kind}.`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setEditForm({
+      full_name: item.full_name,
+      email: item.email,
+      phone_number: item.phone_number,
+      balance: item.balance,
+    });
+    setEditErrors({});
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+    setEditErrors({});
+  };
+
+  const validateEdit = () => {
+    const errs = {};
+    if (!editForm.full_name || editForm.full_name.trim().length < 2) {
+      errs.full_name = "Too short.";
+    }
+    if (!isValidEmail((editForm.email || "").trim())) {
+      errs.email = "Invalid email.";
+    }
+    if (!PHONE_REGEX.test((editForm.phone_number || "").trim())) {
+      errs.phone_number = "Invalid phone.";
+    }
+    if (editForm.balance !== "" && Number(editForm.balance) < 0) {
+      errs.balance = "Cannot be negative.";
+    }
+    setEditErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const saveEdit = async (id) => {
+    if (!validateEdit()) return;
+    try {
+      await api.put(
+        `/api/admin/${endpoint}/${id}`,
+        {
+          full_name: editForm.full_name.trim(),
+          email: editForm.email.trim(),
+          phone_number: editForm.phone_number.trim(),
+          balance: Number(editForm.balance),
+        },
+        { headers: authHeader("admin") }
+      );
+      cancelEdit();
+      onReload();
+    } catch (err) {
+      setError(err.response?.data?.detail || `Could not update ${kind}.`);
+    }
+  };
+
+  const deletePayee = async (id, name) => {
+    if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/api/admin/${endpoint}/${id}`, { headers: authHeader("admin") });
+      onReload();
+    } catch (err) {
+      setError(err.response?.data?.detail || `Could not delete ${kind}. It may have existing transactions.`);
+    }
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="card-title">Add a new {kind}</div>
+        {formMsg && <p className="helper-text">{formMsg}</p>}
+        <form onSubmit={submitPayee} noValidate>
+          <div className="field-row">
+            <div className={`field ${formErrors.full_name ? "has-error" : ""}`}>
+              <label htmlFor={`${kind}-full-name`}>Full name</label>
+              <input
+                id={`${kind}-full-name`}
+                value={form.full_name}
+                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              />
+              {formErrors.full_name && <div className="field-error">{formErrors.full_name}</div>}
+            </div>
+            <div className={`field ${formErrors.email ? "has-error" : ""}`}>
+              <label htmlFor={`${kind}-email`}>Email</label>
+              <input
+                id={`${kind}-email`}
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+              {formErrors.email && <div className="field-error">{formErrors.email}</div>}
+            </div>
+          </div>
+          <div className="field-row">
+            <div className={`field ${formErrors.phone_number ? "has-error" : ""}`}>
+              <label htmlFor={`${kind}-phone`}>Phone number</label>
+              <input
+                id={`${kind}-phone`}
+                value={form.phone_number}
+                onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
+                placeholder="e.g. 03001234567"
+              />
+              {formErrors.phone_number && <div className="field-error">{formErrors.phone_number}</div>}
+            </div>
+            <div className={`field ${formErrors.starting_balance ? "has-error" : ""}`}>
+              <label htmlFor={`${kind}-balance`}>Starting balance</label>
+              <input
+                id={`${kind}-balance`}
+                type="number"
+                value={form.starting_balance}
+                onChange={(e) => setForm({ ...form, starting_balance: e.target.value })}
+              />
+              {formErrors.starting_balance && <div className="field-error">{formErrors.starting_balance}</div>}
+            </div>
+          </div>
+          <button className="btn" type="submit" disabled={submitting}>
+            {submitting ? "Adding…" : `Add ${kind}`}
+          </button>
+        </form>
+      </div>
+
+      <div className="card">
+        <div className="card-title">{title}</div>
+        {items.length === 0 ? (
+          <div className="empty-state">No {kind}s yet — add one above.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Balance</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((p) =>
+                  editingId === p.id ? (
+                    <tr key={p.id}>
+                      <td>#{p.id}</td>
+                      <td>
+                        <input
+                          className="inline-edit-input"
+                          value={editForm.full_name}
+                          onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                        />
+                        {editErrors.full_name && <div className="field-error">{editErrors.full_name}</div>}
+                      </td>
+                      <td>
+                        <input
+                          className="inline-edit-input"
+                          value={editForm.email}
+                          onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                        />
+                        {editErrors.email && <div className="field-error">{editErrors.email}</div>}
+                      </td>
+                      <td>
+                        <input
+                          className="inline-edit-input"
+                          value={editForm.phone_number}
+                          onChange={(e) => setEditForm({ ...editForm, phone_number: e.target.value })}
+                        />
+                        {editErrors.phone_number && <div className="field-error">{editErrors.phone_number}</div>}
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          className="inline-edit-input"
+                          value={editForm.balance}
+                          onChange={(e) => setEditForm({ ...editForm, balance: e.target.value })}
+                        />
+                        {editErrors.balance && <div className="field-error">{editErrors.balance}</div>}
+                      </td>
+                      <td>
+                        <div className="row-actions">
+                          <button className="icon-btn" onClick={() => saveEdit(p.id)}>
+                            Save
+                          </button>
+                          <button className="icon-btn" onClick={cancelEdit}>
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    <tr key={p.id}>
+                      <td>#{p.id}</td>
+                      <td>{p.full_name}</td>
+                      <td>{p.email}</td>
+                      <td>{p.phone_number}</td>
+                      <td>Rs {Number(p.balance).toLocaleString()}</td>
+                      <td>
+                        <div className="row-actions">
+                          <button className="icon-btn" onClick={() => startEdit(p)}>
+                            Edit
+                          </button>
+                          <button className="icon-btn danger" onClick={() => deletePayee(p.id, p.full_name)}>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [tab, setTab] = useState("users");
@@ -15,7 +293,8 @@ export default function AdminDashboard() {
   const [fraudLogs, setFraudLogs] = useState([]);
   const [error, setError] = useState("");
   const [disputes, setDisputes] = useState([]);
-  
+  const [merchants, setMerchants] = useState([]);
+  const [billers, setBillers] = useState([]);
 
   // Add-user form
   const [form, setForm] = useState({ full_name: "", email: "", phone_number: "", password: "", balance: "" });
@@ -83,6 +362,8 @@ export default function AdminDashboard() {
     api.get("/api/admin/transactions", headers).then((r) => setTransactions(r.data)).catch(handleAuthError);
     api.get("/api/admin/fraud-logs", headers).then((r) => setFraudLogs(r.data)).catch(handleAuthError);
     api.get("/api/admin/disputes", headers).then((r) => setDisputes(r.data)).catch(handleAuthError);
+    api.get("/api/admin/merchants", headers).then((r) => setMerchants(r.data)).catch(handleAuthError);
+    api.get("/api/admin/billers", headers).then((r) => setBillers(r.data)).catch(handleAuthError);
   };
 
   // ---------- Add user ----------
@@ -91,7 +372,7 @@ export default function AdminDashboard() {
     if (!form.full_name.trim() || form.full_name.trim().length < 2) {
       errs.full_name = "Full name must be at least 2 characters.";
     }
-    if (!form.email.trim() || !form.email.includes("@") || !form.email.includes(".")) {
+    if (!form.email.trim() || !isValidEmail(form.email.trim())) {
       errs.email = "Enter a valid email address.";
     }
     if (!PHONE_REGEX.test(form.phone_number.trim())) {
@@ -162,7 +443,7 @@ export default function AdminDashboard() {
     if (!editForm.full_name || editForm.full_name.trim().length < 2) {
       errs.full_name = "Too short.";
     }
-    if (!(editForm.email || "").includes("@") || !(editForm.email || "").includes(".")) {
+    if (!isValidEmail((editForm.email || "").trim())) {
       errs.email = "Invalid email.";
     }
     if (!PHONE_REGEX.test((editForm.phone_number || "").trim())) {
@@ -292,6 +573,12 @@ export default function AdminDashboard() {
           </button>
           <button className={`tab ${tab === "disputes" ? "active" : ""}`} onClick={() => setTab("disputes")}>
             Disputes ({disputes.filter((d) => d.status === "pending").length})
+          </button>
+          <button className={`tab ${tab === "merchants" ? "active" : ""}`} onClick={() => setTab("merchants")}>
+            Merchants ({merchants.length})
+          </button>
+          <button className={`tab ${tab === "billers" ? "active" : ""}`} onClick={() => setTab("billers")}>
+            Billers ({billers.length})
           </button>
         </div>
 
@@ -597,6 +884,26 @@ export default function AdminDashboard() {
               </div>
             )}
           </div>
+        )}
+
+        {tab === "merchants" && (
+          <PayeeSection
+            kind="merchant"
+            title="All merchants"
+            items={merchants}
+            onReload={loadAll}
+            setError={setError}
+          />
+        )}
+
+        {tab === "billers" && (
+          <PayeeSection
+            kind="biller"
+            title="All billers"
+            items={billers}
+            onReload={loadAll}
+            setError={setError}
+          />
         )}
       </div>
     </div>
