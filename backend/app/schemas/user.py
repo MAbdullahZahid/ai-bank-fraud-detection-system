@@ -1,8 +1,7 @@
 import re
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 from typing import Optional
-
-PHONE_REGEX = re.compile(r"^\+?[0-9]{7,15}$")
+PHONE_REGEX = re.compile(r"^(?:\+44|0)7\d{9}$")
 
 
 def _validate_phone(v: str) -> str:

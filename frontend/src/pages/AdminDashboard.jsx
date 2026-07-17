@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import api, { authHeader } from "../api";
+import { CURRENCY_SYMBOL, PHONE_REGEX } from "../constants";
 
-const PHONE_REGEX = /^\+?\d{7,15}$/;
 
 const isValidEmail = (value) => (value || "").includes("@") && (value || "").includes(".");
 
@@ -167,7 +167,7 @@ function PayeeSection({ kind, title, items, onReload, setError }) {
                 id={`${kind}-phone`}
                 value={form.phone_number}
                 onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
-                placeholder="e.g. 03001234567"
+                placeholder="e.g. 07911123000"
               />
               {formErrors.phone_number && <div className="field-error">{formErrors.phone_number}</div>}
             </div>
@@ -260,7 +260,7 @@ function PayeeSection({ kind, title, items, onReload, setError }) {
                       <td>{p.full_name}</td>
                       <td>{p.email}</td>
                       <td>{p.phone_number}</td>
-                      <td>Rs {Number(p.balance).toLocaleString()}</td>
+                      <td>{CURRENCY_SYMBOL} {Number(p.balance).toLocaleString()}</td>
                       <td>
                         <div className="row-actions">
                           <button className="icon-btn" onClick={() => startEdit(p)}>
@@ -295,6 +295,11 @@ export default function AdminDashboard() {
   const [disputes, setDisputes] = useState([]);
   const [merchants, setMerchants] = useState([]);
   const [billers, setBillers] = useState([]);
+
+  // Error specific to resolving a dispute — shown right in the Disputes
+  // tab (next to the action) instead of only the page-top banner, since
+  // that banner is easy to miss when you're scrolled down to this tab.
+  const [disputeActionError, setDisputeActionError] = useState("");
 
   // Add-user form
   const [form, setForm] = useState({ full_name: "", email: "", phone_number: "", password: "", balance: "" });
@@ -343,6 +348,7 @@ export default function AdminDashboard() {
     const notes = window.prompt(
       approve ? "Optional note for approving this dispute:" : "Optional note for rejecting this dispute:"
     ) || "";
+    setDisputeActionError("");
     try {
       await api.post(
         `/api/admin/disputes/${disputeId}/resolve`,
@@ -351,7 +357,7 @@ export default function AdminDashboard() {
       );
       loadAll();
     } catch (err) {
-      setError(err.response?.data?.detail || "Could not resolve dispute.");
+      setDisputeActionError(err.response?.data?.detail || "Could not resolve dispute.");
     }
   };
 
@@ -616,7 +622,7 @@ export default function AdminDashboard() {
                       id="admin-phone"
                       value={form.phone_number}
                       onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
-                      placeholder="e.g. 03001234567"
+                      placeholder="e.g. 07911123000"
                     />
                     {formErrors.phone_number && <div className="field-error">{formErrors.phone_number}</div>}
                   </div>
@@ -723,7 +729,7 @@ export default function AdminDashboard() {
                             <td>{u.full_name}</td>
                             <td>{u.email}</td>
                             <td>{u.phone_number}</td>
-                            <td>Rs {Number(u.balance).toLocaleString()}</td>
+                            <td>{CURRENCY_SYMBOL} {Number(u.balance).toLocaleString()}</td>
                             <td>
                               <div className="row-actions">
                                 <button className="icon-btn" onClick={() => startEdit(u)}>
@@ -775,7 +781,7 @@ export default function AdminDashboard() {
                         <td>{t.sender_name} ({t.sender_phone})</td>
                         <td>{t.receiver_name} ({t.receiver_phone})</td>
                         <td>{t.type}</td>
-                        <td>Rs {Number(t.amount).toLocaleString()}</td>
+                        <td>{CURRENCY_SYMBOL} {Number(t.amount).toLocaleString()}</td>
                         <td>{t.fraud_probability?.toFixed(4)}</td>
                         <td>
                           <span className={`tag ${t.prediction === "fraud" ? "fraud" : "legit"}`}>
@@ -816,7 +822,7 @@ export default function AdminDashboard() {
                       <tr key={f.id}>
                         <td>#{f.id}</td>
                         <td>#{f.transaction_id}</td>
-                        <td>{f.amount ? `Rs ${Number(f.amount).toLocaleString()}` : "-"}</td>
+                        <td>{f.amount ? `{CURRENCY_SYMBOL} ${Number(f.amount).toLocaleString()}` : "-"}</td>
                         <td>{f.model_score?.toFixed(4)}</td>
                         <td>{f.threshold}</td>
                         <td style={{ whiteSpace: "normal", fontFamily: "var(--font-body)" }}>{f.reason}</td>
@@ -832,6 +838,7 @@ export default function AdminDashboard() {
         {tab === "disputes" && (
           <div className="card">
             <div className="card-title">Disputed transactions</div>
+            {disputeActionError && <div className="error-banner">{disputeActionError}</div>}
             {disputes.length === 0 ? (
               <div className="empty-state">No disputes yet.</div>
             ) : (
@@ -853,7 +860,7 @@ export default function AdminDashboard() {
                         <td>#{d.id}</td>
                         <td>{d.customer_name} ({d.customer_phone})</td>
                         <td>
-                          #{d.transaction_id} — {d.type}, Rs {Number(d.amount).toLocaleString()}
+                          #{d.transaction_id} — {d.type}, {CURRENCY_SYMBOL} {Number(d.amount).toLocaleString()}
                           <br />
                           <span className="helper-text">score: {d.fraud_probability?.toFixed(4)}</span>
                         </td>

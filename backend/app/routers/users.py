@@ -129,6 +129,26 @@ def get_my_profile(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+@router.get("/verify-recipient/{phone_number}")
+def verify_recipient(
+    phone_number: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Looks up a single account by exact phone number - used by the Send Money
+    screen to show the recipient's name before the customer submits a
+    transfer. Only returns a name for an exact match, never a searchable
+    list, so this doesn't expose a directory of other customers.
+    """
+    recipient = db.query(User).filter(User.phone_number == phone_number.strip()).first()
+    if not recipient:
+        raise HTTPException(status_code=404, detail="No account found with this phone number")
+    if recipient.id == current_user.id:
+        raise HTTPException(status_code=400, detail="This is your own account")
+
+    return {"full_name": recipient.full_name}
+
 @router.post("/verify-password", response_model=VerifyPasswordResponse)
 def verify_password_endpoint(
     data: VerifyPasswordRequest,

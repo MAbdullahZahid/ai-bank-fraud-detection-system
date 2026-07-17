@@ -70,7 +70,7 @@ export default function UserLogin() {
                 id="customer-phone"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. 03001234567"
+                placeholder="e.g. 07911123456"
                 autoFocus
               />
               {errors.phone && <div className="field-error">{errors.phone}</div>}

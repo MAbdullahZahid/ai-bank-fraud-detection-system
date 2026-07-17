@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { authHeader } from "../api";
 import StampBadge from "../components/StampBadge";
-
+import { CURRENCY_SYMBOL, PHONE_REGEX } from "../constants";
 
 
 
@@ -14,7 +14,7 @@ const SCENARIOS = [
     description: "A direct transfer between two customer wallets.",
     outcome: "Use this for the common transfer case where fraud can appear.",
     counterpartyLabel: "Recipient phone",
-    defaultCounterparty: "03001230002",
+    defaultCounterparty: "07911123002",
     direction: "outgoing",
     accent: "fraud",
     scene: "transfer",
@@ -26,7 +26,7 @@ const SCENARIOS = [
     description: "Enter your password, then key in the amount on the ATM and press OK.",
     outcome: "Use this to test blocked or approved cash withdrawal behavior.",
     counterpartyLabel: "ATM / agent phone",
-    defaultCounterparty: "03009990001",
+    defaultCounterparty: "07911123002",
     direction: "outgoing",
     accent: "fraud",
     scene: "atm",
@@ -50,7 +50,7 @@ const SCENARIOS = [
     description: "Money enters the account from a deposit agent.",
     outcome: "This should visually read as money arriving in the wallet.",
     counterpartyLabel: "Deposit agent phone",
-    defaultCounterparty: "03009990003",
+    defaultCounterparty: "07911123001",
     direction: "incoming",
     accent: "legit",
     scene: "cashin",
@@ -70,8 +70,6 @@ const SCENARIOS = [
 ];
 
 
-
-const PHONE_REGEX = /^\+?\d{7,15}$/;
 const KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 const PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_ATTEMPTS = 3;
@@ -143,7 +141,7 @@ function ScenarioVisual({
                 <span className="beam-dot" />
                 <span className="beam-dot" />
               </div>
-              <div className="beam-amount">Rs {formattedAmount}</div>
+              <div className="beam-amount">{CURRENCY_SYMBOL} {formattedAmount}</div>
               <div className="beam-arrow">➜</div>
             </div>
 
@@ -155,7 +153,7 @@ function ScenarioVisual({
             </div>
           </div>
           <div className="scenario-visual-footer">
-            <strong>Rs {formattedAmount}</strong>
+            <strong>{CURRENCY_SYMBOL} {formattedAmount}</strong>
             <span>{scenario.outcome}</span>
           </div>
         </>
@@ -185,7 +183,7 @@ function ScenarioVisual({
                   </div>
                 ) : (
                   <div className="atm-screen-amount">
-                    RS {formattedAmount}
+                    {CURRENCY_SYMBOL} {formattedAmount}
                     {!isSettled && <span className="atm-cursor">▌</span>}
                   </div>
                 )}
@@ -268,7 +266,7 @@ function ScenarioVisual({
             </div>
           </div>
           <div className="scenario-visual-footer">
-            <strong>Rs {formattedAmount}</strong>
+            <strong>{CURRENCY_SYMBOL} {formattedAmount}</strong>
             <span>{scenario.outcome}</span>
           </div>
         </>
@@ -304,7 +302,7 @@ function ScenarioVisual({
             </div>
           </div>
           <div className="scenario-visual-footer">
-            <strong>Rs {formattedAmount}</strong>
+            <strong>{CURRENCY_SYMBOL} {formattedAmount}</strong>
             <span>{scenario.outcome}</span>
           </div>
         </>
@@ -328,7 +326,7 @@ function ScenarioVisual({
             </div>
 
             <div className="cashin-box">
-              <div className="cashin-counter">+ Rs {formattedAmount}</div>
+              <div className="cashin-counter">+ {CURRENCY_SYMBOL} {formattedAmount}</div>
               <div className="cashin-wallet-label">Customer wallet</div>
               <div className="cashin-receipt">
                 <div className="receipt-line" />
@@ -338,7 +336,7 @@ function ScenarioVisual({
             </div>
           </div>
           <div className="scenario-visual-footer">
-            <strong>+ Rs {formattedAmount}</strong>
+            <strong>+ {CURRENCY_SYMBOL} {formattedAmount}</strong>
             <span>{scenario.outcome}</span>
           </div>
         </>
@@ -364,7 +362,7 @@ function ScenarioVisual({
                   Recurring
                 </span>
               </div>
-              <div className="debit-ticket-amount">Rs {formattedAmount}</div>
+              <div className="debit-ticket-amount">{CURRENCY_SYMBOL} {formattedAmount}</div>
               <div className="debit-ticket-meta">Auto-deducted from wallet balance</div>
               <div className="debit-perforation">
                 {Array.from({ length: 14 }).map((_, i) => (
@@ -378,7 +376,7 @@ function ScenarioVisual({
             </div>
           </div>
           <div className="scenario-visual-footer">
-            <strong>Rs {formattedAmount}</strong>
+            <strong>{CURRENCY_SYMBOL} {formattedAmount}</strong>
             <span>{scenario.outcome}</span>
           </div>
         </>
@@ -448,6 +446,8 @@ export default function Transfer() {
   const [myFraudLogs, setMyFraudLogs] = useState([]);
   const [atmFailedAttempts, setAtmFailedAttempts] = useState(0);
   const [atmLocked, setAtmLocked] = useState(false);
+  const [recipientName, setRecipientName] = useState("");
+  const [recipientStatus, setRecipientStatus] = useState("idle"); // idle | checking | found | not_found
 
   // Merchants / billers, fetched from the backend instead of hardcoded
   const [merchants, setMerchants] = useState([]);
@@ -582,6 +582,37 @@ export default function Transfer() {
     setResult(null);
     setApiError("");
   };
+
+  useEffect(() => {
+  if (scenario.scene !== "transfer") {
+    setRecipientName("");
+    setRecipientStatus("idle");
+    return;
+  }
+
+  const cleaned = counterpartyPhone.trim();
+  if (!PHONE_REGEX.test(cleaned)) {
+    setRecipientName("");
+    setRecipientStatus("idle");
+    return;
+  }
+
+  setRecipientStatus("checking");
+  const timer = setTimeout(() => {
+    api
+      .get(`/api/verify-recipient/${encodeURIComponent(cleaned)}`, { headers: authHeader("user") })
+      .then((res) => {
+        setRecipientName(res.data.full_name);
+        setRecipientStatus("found");
+      })
+      .catch(() => {
+        setRecipientName("");
+        setRecipientStatus("not_found");
+      });
+  }, 400);
+
+  return () => clearTimeout(timer);
+}, [counterpartyPhone, scenario.scene]);
 
   useEffect(() => {
     if (scenario.optionsSource) {
@@ -832,7 +863,7 @@ const getFraudReason = (transactionId) => {
                 </div>
                 <div className="profile-row profile-row-highlight">
                   <span>Available balance</span>
-                  <strong>Rs {Number(profile.balance).toLocaleString()}</strong>
+                  <strong>{CURRENCY_SYMBOL} {Number(profile.balance).toLocaleString()}</strong>
                 </div>
               </div>
             )}
@@ -923,6 +954,21 @@ const getFraudReason = (transactionId) => {
                         onChange={(e) => setCounterpartyPhone(e.target.value)}
                         placeholder={scenario.defaultCounterparty}
                       />
+                      
+                    )}
+
+                    {scenario.scene === "transfer" && (
+                      <div className="recipient-lookup">
+                        {recipientStatus === "checking" && (
+                          <span className="helper-text">Checking recipient…</span>
+                        )}
+                        {recipientStatus === "found" && (
+                          <span className="field-success">✓ {recipientName}</span>
+                        )}
+                        {recipientStatus === "not_found" && (
+                          <span className="field-error">No account found with this number</span>
+                        )}
+                      </div>
                     )}
 
                     {errors.counterpartyPhone && <div className="field-error">{errors.counterpartyPhone}</div>}
@@ -1001,7 +1047,7 @@ const getFraudReason = (transactionId) => {
           {item.counterpart_name} ({item.counterpart_phone})
         </td>
         <td>{item.type}</td>
-        <td>Rs {Number(item.amount).toLocaleString()}</td>
+        <td>{CURRENCY_SYMBOL} {Number(item.amount).toLocaleString()}</td>
         <td>
           <span className={`tag ${item.prediction === "fraud" ? "fraud" : "legit"}`}>
             {item.prediction}

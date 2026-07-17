@@ -24,8 +24,7 @@ from app.routers.deps import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/api", tags=["Merchants & Billers"])
 
-PHONE_REGEX = re.compile(r"^\+?[0-9]{7,15}$")
-
+PHONE_REGEX = re.compile(r"^(?:\+44|0)7\d{9}$")
 
 # ---------------------------------------------------
 # Validation

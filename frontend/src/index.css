@@ -1599,7 +1599,7 @@ tr:last-child td {
   border-radius: 14px;
   padding: 20px;
   box-shadow: var(--shadow-sm);
-
+}
 .customer-dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(290px, 0.75fr);
@@ -1870,7 +1870,7 @@ tr:last-child td {
   border-radius: 50%;
 }
 
-}
+
 
 .scenario-card-highlight {
   border-color: rgba(15, 42, 74, 0.18);
@@ -2353,4 +2353,28 @@ tr:last-child td {
 .atm-ok-btn.loading {
   opacity: .85;
   cursor: wait;
+}
+
+.recipient-check {
+  font-size: 12.5px;
+  margin-top: 6px;
+  font-family: var(--font-body);
+}
+
+.recipient-check.checking {
+  color: var(--text-faint);
+}
+
+.recipient-check.found {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.recipient-check.not_found {
+  color: var(--danger);
+}
+
+.field-success {
+  color: #16a34a;
+  font-size: 0.85rem;
 }

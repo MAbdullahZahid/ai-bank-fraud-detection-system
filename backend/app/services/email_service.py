@@ -16,6 +16,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+from app.constants import CURRENCY_SYMBOL
 
 load_dotenv()
 
@@ -63,7 +64,7 @@ An account has been created for you. Here are your login details:
 
 Phone number (used as your account number): {phone_number}
 Password: {password}
-Starting balance: Rs {balance:,.2f}
+Starting balance: {CURRENCY_SYMBOL} {balance:,.2f}
 
 Log in with your phone number and password to send and receive money.
 Please keep these details secure.
@@ -86,7 +87,7 @@ def send_transaction_email(to_email: str, full_name: str, transaction_type: str,
         subject = "Transaction blocked - suspicious activity detected"
         body = f"""Hi {full_name},
 
-A {transaction_type} of Rs {amount:,.2f} on your account was flagged as
+A {transaction_type} of {CURRENCY_SYMBOL} {amount:,.2f} on your account was flagged as
 potentially fraudulent (confidence: {probability * 100:.1f}%) and has been
 BLOCKED. No money was moved.
 
@@ -99,7 +100,7 @@ If this wasn't you, no action is needed - the transaction did not go through.
         subject = "Transaction successful"
         body = f"""Hi {full_name},
 
-Your {transaction_type} of Rs {amount:,.2f} was completed successfully.
+Your {transaction_type} of {CURRENCY_SYMBOL} {amount:,.2f} was completed successfully.
 
 - {SMTP_FROM_NAME}
 """
@@ -125,7 +126,7 @@ def send_admin_fraud_alert(user_full_name: str, user_phone: str, transaction_typ
 
 Customer: {user_full_name} ({user_phone})
 Type: {transaction_type}
-Amount: Rs {amount:,.2f}
+Amount: {CURRENCY_SYMBOL} {amount:,.2f}
 Model confidence: {probability * 100:.2f}%
 Transaction ID: {transaction_id}
 
@@ -146,7 +147,7 @@ def send_dispute_email(to_email: str, full_name: str, approved: bool,
         subject = "Your dispute was approved"
         body = f"""Hi {full_name},
 
-Good news - after review, your disputed {transaction_type} of Rs {amount:,.2f}
+Good news - after review, your disputed {transaction_type} of {CURRENCY_SYMBOL} {amount:,.2f}
 has been confirmed as legitimate. The transaction has now been completed
 and your balance has been updated.
 
@@ -158,7 +159,7 @@ Thank you for reporting this - it also helps us improve our fraud detection.
         subject = "Your dispute was reviewed"
         body = f"""Hi {full_name},
 
-After review, your disputed {transaction_type} of Rs {amount:,.2f} has been
+After review, your disputed {transaction_type} of {CURRENCY_SYMBOL} {amount:,.2f} has been
 confirmed as correctly flagged. The transaction remains blocked and no
 money was moved.
 

@@ -61,11 +61,11 @@ def _seed_demo_accounts():
     demo_accounts = [
         # ATM / cash withdrawal (used by the Cash Out / ATM scenario)
         {"full_name": "ATM / Cash Point", "email": "atm@gmail.com",
-         "phone_number": "03009990001", "balance": 999999999},
+         "phone_number": "07911123002", "balance": 999999999},
 
         # Deposit agent (used by the Cash In scenario)
         {"full_name": "Deposit Agent", "email": "depositagent@gmail.com",
-         "phone_number": "03009990003", "balance": 999999999},
+         "phone_number": "07911123001", "balance": 999999999},
 
     ]
 

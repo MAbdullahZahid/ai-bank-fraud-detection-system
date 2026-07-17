@@ -20,6 +20,7 @@ paying their bills. Those two types are still scored by the ML model.
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.models.transaction import Transaction
+from app.constants import CURRENCY_SYMBOL
 
 # ---- Tunable thresholds - adjust these based on what you see in testing ----
 VELOCITY_WINDOW_MINUTES = 10
@@ -28,8 +29,8 @@ VELOCITY_MAX_TRANSACTIONS = 3
 NEW_COUNTERPARTY_MIN_AMOUNT = 50000
 
 LARGE_FRACTION_OF_BALANCE = 0.9          # sending >=90% of balance in one go
-BALANCE_DRAIN_MIN_AMOUNT = 20000         # ...but only counts as a signal above this Rs amount -
-                                          # draining 96% of a Rs 939 balance is normal, not fraud
+BALANCE_DRAIN_MIN_AMOUNT = 20000         # ...but only counts as a signal above this {CURRENCY_SYMBOL} amount -
+                                          # draining 96% of a {CURRENCY_SYMBOL} 939 balance is normal, not fraud
 
 AMOUNT_MULTIPLIER_VS_AVERAGE = 5          # 5x this account's own average
 ANOMALOUS_AMOUNT_MIN_FLOOR = 20000        # ...and only if the transaction itself clears this floor -
@@ -88,7 +89,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             )
 
     # ---- Rule 3: Large fraction of balance moved at once ----
-    # Only meaningful once real money is involved - draining 96% of a Rs 939
+    # Only meaningful once real money is involved - draining 96% of a {CURRENCY_SYMBOL} 939
     # balance is normal behavior for a low-balance account, not a fraud signal.
     # Both conditions must hold: the amount itself must clear a minimum floor,
     # AND it must represent a large fraction of the account's balance.
@@ -100,7 +101,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         reasons.append(
             f"Balance-drain rule: this transaction moves "
             f"{(amount / sender.balance) * 100:.0f}% of the account's current balance "
-            f"(Rs {amount:,.0f})."
+            f"({CURRENCY_SYMBOL} {amount:,.0f})."
         )
 
     # ---- Rule 4: ATM password attempts - too many wrong tries before success ----
@@ -128,8 +129,8 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             and amount >= avg_amount * AMOUNT_MULTIPLIER_VS_AVERAGE
         ):
             reasons.append(
-                f"Anomalous-amount rule: this transaction (Rs {amount:,.0f}) is over "
-                f"{AMOUNT_MULTIPLIER_VS_AVERAGE}x this account's average of Rs {avg_amount:,.0f}."
+                f"Anomalous-amount rule: this transaction ({CURRENCY_SYMBOL} {amount:,.0f}) is over "
+                f"{AMOUNT_MULTIPLIER_VS_AVERAGE}x this account's average of {CURRENCY_SYMBOL} {avg_amount:,.0f}."
             )
 
     # ---- Rule 6: Repeated transactions to the same counterparty in a short window ----
@@ -149,7 +150,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
     # ---- Rule 7: Suspiciously round large amount ----
     if amount >= ROUND_AMOUNT_THRESHOLD and amount % 10000 == 0:
         reasons.append(
-            f"Round-amount rule: Rs {amount:,.0f} is an unusually round figure for a "
+            f"Round-amount rule: {CURRENCY_SYMBOL} {amount:,.0f} is an unusually round figure for a "
             f"transaction this large."
         )
 
