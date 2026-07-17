@@ -5,6 +5,7 @@ On startup: connects to Postgres, creates schema only if tables are missing.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import disputes
 
 from app.database import init_db
 from app.routers import auth, users, transactions
@@ -30,8 +31,10 @@ def on_startup():
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(transactions.router)
+app.include_router(disputes.router)
 
 
 @app.get("/")
 def root():
     return {"message": "Fraud Detection API is running"}
+

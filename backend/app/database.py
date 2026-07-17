@@ -34,10 +34,10 @@ def init_db():
     Checks existing tables in Postgres - if any expected table is missing,
     creates it. If everything already exists, just connects (no-op).
     """
-    # Import models here so they register with Base.metadata before create_all runs
-    from app.models import user, admin, transaction, fraud_log  # noqa: F401
+    # Import models here so they register with Base.metadata before create_all runs 
+    from app.models import user, admin, transaction, fraud_log, dispute, model_feedback  # noqa: F401
 
-    expected_tables = ["users", "admins", "transactions", "fraud_logs"]
+    expected_tables = ["users", "admins", "transactions", "fraud_logs", "disputes", "model_feedback"]
     inspector = inspect(engine)
     existing_tables = inspector.get_table_names()
 

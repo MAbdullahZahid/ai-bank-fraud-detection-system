@@ -108,7 +108,10 @@ def create_transaction(
         type=tx_in.type,
         fraud_probability=probability,
         prediction="fraud" if final_is_fraud else "legit",
-    )
+        old_balance_orig=old_balance_orig,
+        new_balance_orig=new_balance_orig,
+        old_balance_dest=old_balance_dest,
+        new_balance_dest=new_balance_dest, )
 
 
 

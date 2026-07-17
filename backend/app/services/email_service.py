@@ -138,3 +138,39 @@ Review this in the admin portal under Fraud logs.
     msg.attach(MIMEText(body, "plain"))
 
     return _send(msg, ADMIN_EMAIL)
+
+def send_dispute_email(to_email: str, full_name: str, approved: bool,
+                        amount: float, transaction_type: str) -> bool:
+    """Sent to the customer once an admin resolves their dispute."""
+    if approved:
+        subject = "Your dispute was approved"
+        body = f"""Hi {full_name},
+
+Good news - after review, your disputed {transaction_type} of Rs {amount:,.2f}
+has been confirmed as legitimate. The transaction has now been completed
+and your balance has been updated.
+
+Thank you for reporting this - it also helps us improve our fraud detection.
+
+- {SMTP_FROM_NAME}
+"""
+    else:
+        subject = "Your dispute was reviewed"
+        body = f"""Hi {full_name},
+
+After review, your disputed {transaction_type} of Rs {amount:,.2f} has been
+confirmed as correctly flagged. The transaction remains blocked and no
+money was moved.
+
+If you believe this is incorrect, please contact support directly.
+
+- {SMTP_FROM_NAME}
+"""
+
+    msg = MIMEMultipart()
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    return _send(msg, to_email)

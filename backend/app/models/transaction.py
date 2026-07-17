@@ -12,5 +12,11 @@ class Transaction(Base):
     amount = Column(Float, nullable=False)
     type = Column(String(20), nullable=False)
     fraud_probability = Column(Float, nullable=True)
-    prediction = Column(String(20), nullable=True)  # "legit" or "fraud"
+    prediction = Column(String(20), nullable=True)
+
+    old_balance_orig = Column(Float, nullable=True)
+    new_balance_orig = Column(Float, nullable=True)
+    old_balance_dest = Column(Float, nullable=True)
+    new_balance_dest = Column(Float, nullable=True)
+
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
