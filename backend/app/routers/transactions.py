@@ -26,6 +26,8 @@ from app.schemas.transaction import TransactionCreate, TransactionOut
 from app.services.ml_service import predict_fraud, THRESHOLD
 from app.routers.deps import get_current_admin, get_current_user
 from app.services.email_service import send_transaction_email, send_admin_fraud_alert
+from fastapi import Request
+from app.services.rules_engine import evaluate_rules
 
 router = APIRouter(prefix="/api", tags=["Transactions"])
 
@@ -43,6 +45,7 @@ INCOMING_TYPES = {"CASH_IN"}
 )
 def create_transaction(
     tx_in: TransactionCreate,
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
@@ -77,27 +80,59 @@ def create_transaction(
         old_balance_dest, new_balance_dest,
     )
 
+    
+# -------------------------------
+# Rule-Based Fraud Detection
+# -------------------------------
+
+    ip_address = request.client.host if request.client else None
+    device = request.headers.get("user-agent")
+
+    rule_triggered, rule_reasons = evaluate_rules(
+    db,
+    current_user,
+    receiver,
+    tx_in.amount,
+    tx_in.type,
+    ip_address=ip_address,
+    device=device,
+    )
+
+# Final Decision
+    final_is_fraud = is_fraud or rule_triggered
+
     transaction = Transaction(
         sender_id=sender.id,
         receiver_id=receiver.id,
         amount=tx_in.amount,
         type=tx_in.type,
         fraud_probability=probability,
-        prediction="fraud" if is_fraud else "legit",
+        prediction="fraud" if final_is_fraud else "legit",
     )
+
+
+
     db.add(transaction)
     db.commit()
     db.refresh(transaction)
 
-    if is_fraud:
+    if final_is_fraud:
+        reason_parts = []
+
+        if is_fraud:
+            reason_parts.append(
+            f"ML model: {tx_in.type} of amount {tx_in.amount:.2f} "
+            f"scored {probability:.4f} (>= threshold {THRESHOLD}).")
+
+            # Rule Engine Reasons
+        if rule_triggered:
+            reason_parts.extend(rule_reasons)
+
         fraud_log = FraudLog(
             transaction_id=transaction.id,
             model_score=probability,
             threshold=THRESHOLD,
-            reason=(
-                f"{tx_in.type} of amount {tx_in.amount:.2f} flagged as fraud "
-                f"(model score {probability:.4f} >= threshold {THRESHOLD})."
-            ),
+            reason=" | ".join(reason_parts),
         )
         db.add(fraud_log)
         db.commit()
@@ -124,6 +159,9 @@ def create_transaction(
             transaction_type=tx_in.type, amount=tx_in.amount,
             is_fraud=False, probability=probability,
         )
+    current_user.last_ip = ip_address
+    current_user.last_device = device
+    db.commit()    
 
     return transaction
 

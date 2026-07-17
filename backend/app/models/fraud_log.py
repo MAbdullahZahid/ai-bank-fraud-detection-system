@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, Float, String,Text, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -10,5 +10,5 @@ class FraudLog(Base):
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=False)
     model_score = Column(Float, nullable=False)
     threshold = Column(Float, nullable=False)
-    reason = Column(String(255), nullable=True)
+    reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

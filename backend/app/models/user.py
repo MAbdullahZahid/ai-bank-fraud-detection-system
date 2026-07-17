@@ -13,3 +13,5 @@ class User(Base):
     password = Column(String(255), nullable=False)  # stored hashed, never plain text
     balance = Column(Float, nullable=False, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_ip = Column(String(45), nullable=True)
+    last_device = Column(String(255), nullable=True)
