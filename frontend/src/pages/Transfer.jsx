@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import api, { authHeader } from "../api";
 import StampBadge from "../components/StampBadge";
 
+
+
+
 const SCENARIOS = [
   {
     type: "TRANSFER",
@@ -71,6 +74,7 @@ const SCENARIOS = [
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 const KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 const PASSWORD_LENGTH = 6;
+const MAX_PASSWORD_ATTEMPTS = 3;
 
 function getVisualStatus(scenario, result) {
   if (result?.prediction === "fraud") {
@@ -94,6 +98,7 @@ function ScenarioVisual({
   atmPassword,
   atmError,
   atmVerifying,
+  atmLocked,
   loading,
   onKeyPress,
   onAtmConfirm,
@@ -105,12 +110,14 @@ function ScenarioVisual({
   const isBlocked = result?.prediction === "fraud";
   const isSettled = Boolean(result);
   const isAmountStage = atmStage === "amount";
-   const isBusy = atmVerifying || loading;
+  const isBusy = atmVerifying || loading;
+   const isLockedOut = atmLocked && !isSettled;
 
   const okDisabled =
     scenario.scene === "atm" &&
     (isSettled ||
-      atmVerifying ||
+      isLockedOut || 
+      isBusy ||
       (atmStage === "password" ? atmPassword.length !== PASSWORD_LENGTH : !amount || Number(amount) <= 0));
 
   return (
@@ -210,7 +217,7 @@ function ScenarioVisual({
         key={key}
         type="button"
         className="atm-key"
-        disabled={isSettled || isBusy}
+        disabled={isSettled || isBusy || isLockedOut}
         onClick={() => onKeyPress(key)}
         aria-label={key === "*" ? "Clear all" : key === "#" ? "Backspace" : `Digit ${key}`}
       >
@@ -225,7 +232,7 @@ function ScenarioVisual({
       type="button"
       className="atm-del-btn"
       onClick={onBackspace}
-      disabled={isBusy || (atmStage === "password" ? atmPassword.length === 0 : amount.length === 0)}
+      disabled={isBusy || isLockedOut || (atmStage === "password" ? atmPassword.length === 0 : amount.length === 0)}
       aria-label="Delete last character"
     >
       ✕ DEL
@@ -233,7 +240,7 @@ function ScenarioVisual({
   </div>
 )}
 
- {!isSettled ? (
+ {!isSettled && !isLockedOut ? (
   <button type="button" className="atm-ok-btn" disabled={okDisabled} onClick={onAtmConfirm}>
     {isBusy
       ? (atmStage === "password" ? "CHECKING…" : "PROCESSING…")
@@ -439,6 +446,8 @@ export default function Transfer() {
   const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const [disputeMsg, setDisputeMsg] = useState("");
   const [myFraudLogs, setMyFraudLogs] = useState([]);
+  const [atmFailedAttempts, setAtmFailedAttempts] = useState(0);
+  const [atmLocked, setAtmLocked] = useState(false);
 
   // Merchants / billers, fetched from the backend instead of hardcoded
   const [merchants, setMerchants] = useState([]);
@@ -567,6 +576,8 @@ export default function Transfer() {
     setAtmPassword("");
     setAtmError("");
     setAtmVerifying(false);
+    setAtmFailedAttempts(0);      
+  setAtmLocked(false);          
     setAmount("");
     setResult(null);
     setApiError("");
@@ -639,71 +650,90 @@ export default function Transfer() {
   setAtmError("");
 };
 
-  const handleAtmConfirm = async () => {
-    if (atmStage === "password") {
-      if (atmPassword.length !== PASSWORD_LENGTH) {
-        setAtmError("ENTER ALL 6 DIGITS");
-        return;
-      }
-      setAtmError("");
-      setAtmVerifying(true);
-      try {
-        const res = await api.post(
-          "/api/verify-password",
-          { password: atmPassword },
-          { headers: authHeader("user") }
-        );
-        if (res.data?.valid) {
-          setAtmStage("amount");
-          setAtmPassword("");
-          setAmount("");
-        } else {
-          setAtmError("INCORRECT PASSWORD");
-          setAtmPassword("");
-        }
-      } catch (err) {
-        setAtmError(err.response?.data?.detail || "COULD NOT VERIFY PASSWORD");
-        setAtmPassword("");
-      } finally {
-        setAtmVerifying(false);
-      }
+const handleAtmConfirm = async () => {
+  if (atmStage === "password") {
+    if (atmPassword.length !== PASSWORD_LENGTH) {
+      setAtmError("ENTER ALL 6 DIGITS");
       return;
     }
-
-    // amount stage — validate then withdraw
-    const value = Number(amount);
-    if (!amount || Number.isNaN(value) || value <= 0) {
-      setAtmError("ENTER A VALID AMOUNT");
-      return;
-    }
-    if (profile && value > profile.balance) {
-      setAtmError("AMOUNT EXCEEDS BALANCE");
-      return;
-    }
-
     setAtmError("");
-    setLoading(true);
-    setApiError("");
+    setAtmVerifying(true);
     try {
       const res = await api.post(
-        "/api/transactions",
-        {
-          counterparty_phone: scenario.defaultCounterparty,
-          amount: value,
-          type: "CASH_OUT",
-        },
+        "/api/verify-password",
+        { password: atmPassword },
         { headers: authHeader("user") }
       );
-      setResult(res.data);
-      loadProfile();
-      loadHistory();
-      loadFraudLogs();
+      if (res.data?.valid) {
+        setAtmStage("amount");
+        setAtmPassword("");
+        setAmount("");
+      } else {
+        const nextAttempts = atmFailedAttempts + 1;
+        setAtmFailedAttempts(nextAttempts);
+        setAtmPassword("");
+        setAtmError(`INCORRECT PASSWORD (${nextAttempts}/${MAX_PASSWORD_ATTEMPTS})`);
+      }
     } catch (err) {
-      setApiError(err.response?.data?.detail || "Something went wrong submitting this transaction.");
+      // The backend is the source of truth for locking. A 403 here means
+      // the account just got locked server-side (3rd wrong attempt) - log
+      // the customer out immediately and send them back to login instead
+      // of letting them sit on this screen or keep trying.
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+
+      if (status === 403) {
+        setAtmLocked(true);
+        setAtmError(detail || "TOO MANY ATTEMPTS - CARD RETAINED");
+        alert(detail || "Too many attempts. Please wait 15 minutes and log in again.");
+        clearSession();
+        navigate("/login");
+        return;
+      }
+
+      setAtmError(detail || "COULD NOT VERIFY PASSWORD");
+      setAtmPassword("");
     } finally {
-      setLoading(false);
+      setAtmVerifying(false);
     }
-  };
+    return;
+  }
+
+  // amount stage — validate then withdraw
+  const value = Number(amount);
+  if (!amount || Number.isNaN(value) || value <= 0) {
+    setAtmError("ENTER A VALID AMOUNT");
+    return;
+  }
+  if (profile && value > profile.balance) {
+    setAtmError("AMOUNT EXCEEDS BALANCE");
+    return;
+  }
+
+  setAtmError("");
+  setLoading(true);
+  setApiError("");
+  try {
+    const res = await api.post(
+      "/api/transactions",
+      {
+        counterparty_phone: scenario.defaultCounterparty,
+        amount: value,
+        type: "CASH_OUT",
+        failed_password_attempts: atmFailedAttempts,   // NEW - sent along with the withdrawal
+      },
+      { headers: authHeader("user") }
+    );
+    setResult(res.data);
+    loadProfile();
+    loadHistory();
+    loadFraudLogs();
+  } catch (err) {
+    setApiError(err.response?.data?.detail || "Something went wrong submitting this transaction.");
+  } finally {
+    setLoading(false);
+  }
+};
 
 const getFraudReason = (transactionId) => {
   const log = myFraudLogs.find((f) => f.transaction_id === transactionId);
@@ -844,6 +874,7 @@ const getFraudReason = (transactionId) => {
                 atmError={atmError}
                 atmVerifying={atmVerifying}
                 loading={loading}
+                atmLocked={atmLocked}
                 onKeyPress={handleKeypadPress}
                 onAtmConfirm={handleAtmConfirm}
                 onAtmReset={resetAtm}

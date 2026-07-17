@@ -5,6 +5,8 @@ numbers - they only ever type in a destination phone number when sending
 money (handled in transactions.py), like a mobile wallet account number.
 """
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -19,6 +21,20 @@ from app.routers.deps import get_current_admin, get_current_user
 
 
 router = APIRouter(prefix="/api", tags=["Users"])
+
+# ---- ATM password lockout state ----
+# Held in memory (NOT on the User model/DB) so no migration is needed.
+# Keyed by user id -> {"attempts": int, "locked_until": datetime | None}
+# Caveats: resets if the server process restarts, and only works correctly
+# with a single worker process (fine for dev/demo, not for multi-worker prod).
+_atm_lockout_state: dict[int, dict] = {}
+
+ATM_MAX_ATTEMPTS = 3
+ATM_LOCKOUT_MINUTES = 15
+
+
+def _get_lockout(user_id: int) -> dict:
+    return _atm_lockout_state.setdefault(user_id, {"attempts": 0, "locked_until": None})
 
 
 @router.post("/admin/users", response_model=UserCreateResult)
@@ -112,10 +128,11 @@ def get_my_profile(current_user: User = Depends(get_current_user)):
     """The logged-in user's own profile - includes their balance, nothing about other users."""
     return current_user
 
+
 @router.post("/verify-password", response_model=VerifyPasswordResponse)
 def verify_password_endpoint(
     data: VerifyPasswordRequest,
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == current_user.id).first()
@@ -123,7 +140,37 @@ def verify_password_endpoint(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if not verify_password(data.password, user.password):
-        raise HTTPException(status_code=401, detail="Incorrect password")
+    now = datetime.utcnow()
+    lockout = _get_lockout(user.id)
 
-    return {"valid": True}
+    # Already locked - reject before even checking the password, so the lock
+    # can't be reset just by retrying.
+    if lockout["locked_until"] and lockout["locked_until"] > now:
+        remaining_seconds = (lockout["locked_until"] - now).total_seconds()
+        remaining_minutes = int(remaining_seconds // 60) + 1
+        raise HTTPException(
+            status_code=403,
+            detail=f"Card locked. Try again in {remaining_minutes} minute(s).",
+        )
+
+    # Lock window already expired on its own - clear stale state before
+    # evaluating this attempt.
+    if lockout["locked_until"] and lockout["locked_until"] <= now:
+        lockout["locked_until"] = None
+        lockout["attempts"] = 0
+
+    if verify_password(data.password, user.password):
+        lockout["attempts"] = 0
+        return {"valid": True}
+
+    lockout["attempts"] += 1
+
+    if lockout["attempts"] >= ATM_MAX_ATTEMPTS:
+        lockout["locked_until"] = now + timedelta(minutes=ATM_LOCKOUT_MINUTES)
+        lockout["attempts"] = 0
+        raise HTTPException(
+            status_code=403,
+            detail=f"Too many attempts. Card retained for {ATM_LOCKOUT_MINUTES} minutes.",
+        )
+
+    return {"valid": False}

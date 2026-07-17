@@ -9,6 +9,13 @@ class TransactionCreate(BaseModel):
     counterparty_phone: str = Field(validation_alias=AliasChoices("counterparty_phone", "receiver_phone"))
     amount: float = Field(gt=0)
     type: str
+    # Only ever meaningful for CASH_OUT (ATM flow) - count of wrong password
+    # tries immediately before this attempt succeeded. Every other type
+    # should send 0 (or omit it), which the rules engine treats as a no-op.
+    # Bounded 0-3 since the frontend locks the card after 3 total attempts -
+    # anything outside that range can't be a real value and is rejected here
+    # rather than trusted from the client.
+    failed_password_attempts: int = Field(default=0, ge=0, le=3)
 
     @field_validator("type")
     @classmethod

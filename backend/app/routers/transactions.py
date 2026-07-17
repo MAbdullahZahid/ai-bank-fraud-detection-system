@@ -86,6 +86,7 @@ def create_transaction(
 # -------------------------------
 
     ip_address = request.client.host if request.client else None
+
     device = request.headers.get("user-agent")
 
     rule_triggered, rule_reasons = evaluate_rules(
@@ -96,6 +97,7 @@ def create_transaction(
     tx_in.type,
     ip_address=ip_address,
     device=device,
+    failed_password_attempts=getattr(tx_in, "failed_password_attempts", 0) or 0,
     )
 
 # Final Decision

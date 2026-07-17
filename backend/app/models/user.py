@@ -17,3 +17,4 @@ class User(Base):
     last_device = Column(String(255), nullable=True)
     is_merchant = Column(Boolean, nullable=False, default=False)
     is_biller = Column(Boolean, nullable=False, default=False)
+    locked_until = Column(DateTime, nullable=True)
