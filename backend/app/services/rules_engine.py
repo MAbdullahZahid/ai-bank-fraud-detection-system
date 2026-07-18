@@ -55,7 +55,7 @@ comparison in Python, after normalizing tzinfo away, removes that dependency
 on driver/column behavior entirely.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.models.transaction import Transaction
 from app.constants import CURRENCY_SYMBOL
@@ -125,13 +125,24 @@ RECEIVER_LOCK_WINDOW_DAYS = 2
 
 
 def _as_naive_utc(dt):
-    """Normalize a timestamp to a naive datetime so every window comparison
-    in this module is done the same way, regardless of whether the DB
-    driver handed back a naive or timezone-aware value."""
+    """Normalize a timestamp to a naive UTC datetime so every window
+    comparison in this module is done on the same clock.
+
+    Your DB column is TIMESTAMPTZ and stores the correct offset (e.g.
+    `2026-07-18 18:02:23.62653+05`), so the driver hands this back as a
+    timezone-AWARE datetime with that +05 offset attached - the value itself
+    is correct. The only mistake would be dropping that offset instead of
+    applying it: `dt.replace(tzinfo=None)` on an aware `18:02:23+05` value
+    would silently treat it as `18:02:23 UTC`, a 5-hour error - the same bug
+    as before, just moved from the SQL layer into Python. `astimezone(utc)`
+    actually shifts the wall-clock value by that offset first, THEN drops
+    the tzinfo, so `18:02:23+05` correctly becomes `13:02:23` naive UTC -
+    matching what `datetime.utcnow()` produces below.
+    """
     if dt is None:
         return None
     if dt.tzinfo is not None:
-        return dt.replace(tzinfo=None)
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
 
 
@@ -357,11 +368,20 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
 
     # ---- Rule 16 [HIGH]: Receiver lock - repeated recent fraud landing on this account ----
     # Mirrors the ATM card-lock rule (4), but for the receiving side: 3+
-    # fraud-flagged transactions TO this receiver, of ANY transaction type,
-    # from any sender, within a 2-day rolling window - blocks alone, like a
-    # temporary receive-side freeze. Self-clears as old incidents age past
-    # RECEIVER_LOCK_WINDOW_DAYS and the count drops back under the threshold.
-    if receiver is not None:
+    # fraud-flagged transactions TO this receiver within a 2-day rolling
+    # window - blocks alone, like a temporary receive-side freeze. Self-clears
+    # as old incidents age past RECEIVER_LOCK_WINDOW_DAYS and the count drops
+    # back under the threshold.
+    #
+    # Restricted to TRANSFER only. CASH_OUT's "receiver" is the shared
+    # ATM/agent phone number - every customer's withdrawal lands on the same
+    # account, so a handful of unrelated blocked withdrawals (velocity,
+    # wrong password, etc.) would rack up 3+ fraud hits on that one shared
+    # number and lock ATM withdrawals for every customer, not just an
+    # account actually being used as a fraud drop point. PAYMENT/DEBIT are
+    # already excluded entirely by the NON_SCORED_TYPES check at the top of
+    # this function, so TRANSFER is the only type this should ever apply to.
+    if receiver is not None and type_ == "TRANSFER":
         receiver_lock_window_start = now - timedelta(days=RECEIVER_LOCK_WINDOW_DAYS)
         receiver_tx = db.query(Transaction).filter(Transaction.receiver_id == receiver.id).all()
         receiver_fraud_count = sum(
