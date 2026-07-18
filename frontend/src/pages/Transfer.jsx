@@ -844,178 +844,174 @@ const getFraudReason = (transactionId) => {
           the transaction and inspect the result instantly.
         </p>
 
-        <div className="customer-dashboard-grid">
-          <div className="customer-main-column">
-            {profile && (
-              <div className="card profile-card">
-                <div className="card-title">Logged in customer</div>
-                <div className="profile-row">
-                  <span>Name</span>
-                  <strong>{profile.full_name}</strong>
-                </div>
-                <div className="profile-row">
-                  <span>Email</span>
-                  <strong>{profile.email}</strong>
-                </div>
-                <div className="profile-row">
-                  <span>Phone</span>
-                  <strong>{profile.phone_number}</strong>
-                </div>
-                <div className="profile-row profile-row-highlight">
-                  <span>Available balance</span>
-                  <strong>{CURRENCY_SYMBOL} {Number(profile.balance).toLocaleString()}</strong>
-                </div>
+        <div className="profile-grid">
+          {profile && (
+            <div className="card profile-card">
+              <div className="card-title">Logged in customer</div>
+              <div className="profile-row">
+                <span>Name</span>
+                <strong>{profile.full_name}</strong>
               </div>
-            )}
-
-            <div className="card">
-              <div className="card-title">Choose a flow</div>
-              <div className="scenario-selector">
-                {SCENARIOS.map((item) => (
-                  <button
-                    key={item.type}
-                    type="button"
-                    className={`scenario-tile ${type === item.type ? "active" : ""}`}
-                    onClick={() => {
-                      setType(item.type);
-                      setResult(null);
-                      setApiError("");
-                    }}
-                  >
-                    <div className="scenario-tile-head">
-                      <span>{item.title}</span>
-                      <span className={`scenario-pulse ${item.accent}`} />
-                    </div>
-                    <p>{item.subtitle}</p>
-                    <small>{item.outcome}</small>
-                  </button>
-                ))}
+              <div className="profile-row">
+                <span>Email</span>
+                <strong>{profile.email}</strong>
+              </div>
+              <div className="profile-row">
+                <span>Phone</span>
+                <strong>{profile.phone_number}</strong>
+              </div>
+              <div className="profile-row profile-row-highlight">
+                <span>Available balance</span>
+                <strong>{CURRENCY_SYMBOL} {Number(profile.balance).toLocaleString()}</strong>
               </div>
             </div>
+          )}
 
-            <div className="card">
-              <div className="card-title">Live bank scene</div>
-              <ScenarioVisual
-                scenario={scenario}
-                amount={amount}
-                result={result}
-                profile={profile}
-                atmStage={atmStage}
-                atmPassword={atmPassword}
-                atmError={atmError}
-                atmVerifying={atmVerifying}
-                loading={loading}
-                atmLocked={atmLocked}
-                onKeyPress={handleKeypadPress}
-                onAtmConfirm={handleAtmConfirm}
-                onAtmReset={resetAtm}
-                 onBackspace={handleBackspace}
-              />
-            </div>
+          <div className="card scenario-summary-card">
+            <div className="card-title">Scenario details</div>
+            <div className={`scenario-badge ${scenario.accent}`}>{scenario.title}</div>
+            <div className="scenario-subtitle">{scenario.subtitle}</div>
+            <p className="scenario-copy">{scenario.description}</p>
+            <div className="scenario-note">{scenario.outcome}</div>
+          </div>
+        </div>
 
-            <div className="card">
-              <div className="card-title">Run transaction</div>
-              {apiError && <div className="error-banner">{apiError}</div>}
-
-              {isAtm ? (
-                <div className="atm-form-note">
-                  {atmStage === "password"
-                    ? "Enter your 6-digit password on the ATM keypad above, then press OK."
-                    : "Enter the cash amount on the ATM keypad above, then press OK · WITHDRAW."}
+        <div className="card">
+          <div className="card-title">Choose a flow</div>
+          <div className="scenario-selector">
+            {SCENARIOS.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                className={`scenario-tile ${type === item.type ? "active" : ""}`}
+                onClick={() => {
+                  setType(item.type);
+                  setResult(null);
+                  setApiError("");
+                }}
+              >
+                <div className="scenario-tile-head">
+                  <span>{item.title}</span>
+                  <span className={`scenario-pulse ${item.accent}`} />
                 </div>
-              ) : (
-                <form onSubmit={submit} noValidate>
-                  <div className={`field ${errors.counterpartyPhone ? "has-error" : ""}`}>
-                    <label>{scenario.counterpartyLabel}</label>
-
-                    {counterpartyOptions ? (
-                      counterpartyOptions.length === 0 ? (
-                        <div className="helper-text">
-                          No {scenario.counterpartyLabel.toLowerCase()}s available yet.
-                        </div>
-                      ) : (
-                        <div className="option-list">
-                          {counterpartyOptions.map((opt) => (
-                            <button
-                              key={opt.phone}
-                              type="button"
-                              className={`option-pill ${counterpartyPhone === opt.phone ? "active" : ""}`}
-                              onClick={() => setCounterpartyPhone(opt.phone)}
-                            >
-                              {opt.name}
-                            </button>
-                          ))}
-                        </div>
-                      )
-                    ) : (
-                      <input
-                        id="counterparty-phone"
-                        value={counterpartyPhone}
-                        onChange={(e) => setCounterpartyPhone(e.target.value)}
-                        placeholder={scenario.defaultCounterparty}
-                      />
-                      
-                    )}
-
-                    {scenario.scene === "transfer" && (
-                      <div className="recipient-lookup">
-                        {recipientStatus === "checking" && (
-                          <span className="helper-text">Checking recipient…</span>
-                        )}
-                        {recipientStatus === "found" && (
-                          <span className="field-success">✓ {recipientName}</span>
-                        )}
-                        {recipientStatus === "not_found" && (
-                          <span className="field-error">No account found with this number</span>
-                        )}
-                      </div>
-                    )}
-
-                    {errors.counterpartyPhone && <div className="field-error">{errors.counterpartyPhone}</div>}
-                    <div className="helper-text">{scenario.description}</div>
-                  </div>
-
-                  <div className="field-row">
-                    <div className={`field ${errors.amount ? "has-error" : ""}`}>
-                      <label htmlFor="tx-amount">Amount</label>
-                      <input
-                        id="tx-amount"
-                        type="number"
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        min="1"
-                        step="0.01"
-                      />
-                      {errors.amount && <div className="field-error">{errors.amount}</div>}
-                    </div>
-                    <div className="field">
-                      <div className="field-label">Active flow</div>
-                      <div id="active-flow" className="active-flow-pill">
-                        {scenario.title}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button className="btn" type="submit" disabled={loading}>
-                    {loading ? "Checking transaction…" : `Run ${scenario.type.toLowerCase()} scenario`}
-                  </button>
-                </form>
-              )}
-
-              <StampBadge result={result} />
-            </div>
+                <p>{item.subtitle}</p>
+                <small>{item.outcome}</small>
+              </button>
+            ))}
           </div>
+        </div>
 
-          <div className="customer-side-column">
-            <div className="card scenario-summary-card">
-              <div className="card-title">Scenario details</div>
-              <div className={`scenario-badge ${scenario.accent}`}>{scenario.title}</div>
-              <div className="scenario-subtitle">{scenario.subtitle}</div>
-              <p className="scenario-copy">{scenario.description}</p>
-              <div className="scenario-note">{scenario.outcome}</div>
+        <div className="card">
+          <div className="card-title">Live bank scene</div>
+          <ScenarioVisual
+            scenario={scenario}
+            amount={amount}
+            result={result}
+            profile={profile}
+            atmStage={atmStage}
+            atmPassword={atmPassword}
+            atmError={atmError}
+            atmVerifying={atmVerifying}
+            loading={loading}
+            atmLocked={atmLocked}
+            onKeyPress={handleKeypadPress}
+            onAtmConfirm={handleAtmConfirm}
+            onAtmReset={resetAtm}
+             onBackspace={handleBackspace}
+          />
+        </div>
+
+        <div className="card">
+          <div className="card-title">Run transaction</div>
+          {apiError && <div className="error-banner">{apiError}</div>}
+
+          {isAtm ? (
+            <div className="atm-form-note">
+              {atmStage === "password"
+                ? "Enter your 6-digit password on the ATM keypad above, then press OK."
+                : "Enter the cash amount on the ATM keypad above, then press OK · WITHDRAW."}
             </div>
-          </div>
+          ) : (
+            <form onSubmit={submit} noValidate>
+              <div className={`field ${errors.counterpartyPhone ? "has-error" : ""}`}>
+                <label>{scenario.counterpartyLabel}</label>
+
+                {counterpartyOptions ? (
+                  counterpartyOptions.length === 0 ? (
+                    <div className="helper-text">
+                      No {scenario.counterpartyLabel.toLowerCase()}s available yet.
+                    </div>
+                  ) : (
+                    <div className="option-list">
+                      {counterpartyOptions.map((opt) => (
+                        <button
+                          key={opt.phone}
+                          type="button"
+                          className={`option-pill ${counterpartyPhone === opt.phone ? "active" : ""}`}
+                          onClick={() => setCounterpartyPhone(opt.phone)}
+                        >
+                          {opt.name}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <input
+                    id="counterparty-phone"
+                    value={counterpartyPhone}
+                    onChange={(e) => setCounterpartyPhone(e.target.value)}
+                    placeholder={scenario.defaultCounterparty}
+                  />
+                  
+                )}
+
+                {scenario.scene === "transfer" && (
+                  <div className="recipient-lookup">
+                    {recipientStatus === "checking" && (
+                      <span className="helper-text">Checking recipient…</span>
+                    )}
+                    {recipientStatus === "found" && (
+                      <span className="field-success">✓ {recipientName}</span>
+                    )}
+                    {recipientStatus === "not_found" && (
+                      <span className="field-error">No account found with this number</span>
+                    )}
+                  </div>
+                )}
+
+                {errors.counterpartyPhone && <div className="field-error">{errors.counterpartyPhone}</div>}
+                <div className="helper-text">{scenario.description}</div>
+              </div>
+
+              <div className="field-row">
+                <div className={`field ${errors.amount ? "has-error" : ""}`}>
+                  <label htmlFor="tx-amount">Amount</label>
+                  <input
+                    id="tx-amount"
+                    type="number"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    min="1"
+                    step="0.01"
+                  />
+                  {errors.amount && <div className="field-error">{errors.amount}</div>}
+                </div>
+                <div className="field">
+                  <div className="field-label">Active flow</div>
+                  <div id="active-flow" className="active-flow-pill">
+                    {scenario.title}
+                  </div>
+                </div>
+              </div>
+
+              <button className="btn" type="submit" disabled={loading}>
+                {loading ? "Checking transaction…" : `Run ${scenario.type.toLowerCase()} scenario`}
+              </button>
+            </form>
+          )}
+
+          <StampBadge result={result} />
         </div>
 
         <div className="card">
