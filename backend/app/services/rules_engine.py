@@ -1,143 +1,106 @@
-"""
-Rule-based fraud checks that run ALONGSIDE the ML model's prediction.
-These catch behavioral patterns the model was never trained on - PaySim has
-no IP, device, timing, or account-history data, so no amount of feature
-engineering on the trained model can see these. This is the standard
-real-world pattern: an ML score plus a separate rules engine, combined at
-decision time - not features baked into the model itself.
-
-SCORING MODEL (not plain OR):
-Each rule that fires contributes a severity weight (HIGH=3, MEDIUM=2, LOW=1)
-instead of blocking the transaction by itself. The transaction is only
-treated as fraud if the TOTAL score across all fired rules reaches
-BLOCK_SCORE_THRESHOLD. This means:
-  - One HIGH-severity rule (e.g. rapid balance-drain, repeated password
-    failures) blocks on its own - it's strong evidence by itself.
-  - A single MEDIUM or LOW rule (e.g. a round amount, or a new device)
-    does NOT block alone - those happen to innocent users constantly and
-    are only meaningful combined with something else.
-  - IP change is the one exception promoted to HIGH: a different IP than
-    this account's last known one blocks on its own, since it's a stronger
-    signal of account takeover than a device change.
-  - Multiple weaker signals stacking together (e.g. new device + round amount +
-    dormant account) CAN still cross the threshold and block, same as real
-    fraud-scoring systems.
-
-PAYMENT and DEBIT transactions (merchants and billers) are exempt from all
-rules below - counterparties for those types come from a curated, vetted
-list rather than free-text phone numbers, so velocity/structuring/new-
-counterparty behavior on them isn't a fraud signal, it's just someone
-paying their bills. Those two types are still scored by the ML model.
-
-IMPORTANT - this exemption is enforced in TWO places, not one:
-  1. The early return below skips scoring the CURRENT transaction if it's
-     a PAYMENT or DEBIT.
-  2. Every query that looks at a sender's TRANSACTION HISTORY to score a
-     *different* (non-exempt) transaction also excludes PAYMENT/DEBIT rows.
-     Without (2), paying a bill or a merchant would still get counted
-     toward velocity/rapid-drain/fan-out/daily-limit totals for a later,
-     unrelated transfer or withdrawal - which is exactly the kind of false
-     positive that made the velocity and rapid-drain rules look wrong
-     ("4 transactions in 10 minutes" when only some of those were actually
-     transfers/withdrawals).
-
-TIMESTAMP HANDLING:
-All "within N minutes/hours/days" windows are computed in Python against a
-single `now = datetime.utcnow()` captured once per evaluation, after
-normalizing every timestamp to a naive UTC value. Window filtering used to
-happen inside the SQL query itself (`Transaction.timestamp >= window_start`),
-comparing a naive Python datetime against whatever the DB driver returns for
-that column. If the column is ever timezone-aware, or a DB-side default
-produced a value in a different timezone than `datetime.utcnow()`, that
-comparison can silently include rows that aren't really inside the window -
-which looks exactly like "the count is higher than it should be." Doing the
-comparison in Python, after normalizing tzinfo away, removes that dependency
-on driver/column behavior entirely.
-"""
-
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.models.transaction import Transaction
 from app.constants import CURRENCY_SYMBOL
 
-# ---- Severity weights and the score needed to actually block ----
+
 SEVERITY_HIGH = 3     # strong enough to block completely alone
 SEVERITY_MEDIUM = 2   # real signal, but not alone-worthy
 SEVERITY_LOW = 1      # weak signal, only meaningful combined with others
 BLOCK_SCORE_THRESHOLD = 3
 
 # Transaction types that never get scored by this engine, and whose history
-# is excluded when scoring OTHER (non-exempt) transactions too. See the
-# module docstring's "IMPORTANT" note above.
+# is excluded when scoring OTHER (non-exempt) transactions too.
 NON_SCORED_TYPES = ("PAYMENT", "DEBIT")
+
+
+ACCOUNT_SCALE_FLOOR = 5000
+
+
+def _account_scale(sender_balance: float, legit_avg_amount: float) -> float:
+    return max(sender_balance or 0, legit_avg_amount or 0, ACCOUNT_SCALE_FLOOR)
+
+
+def _scaled_threshold(scale: float, fraction: float, absolute_floor: float) -> float:
+    """The amount a transaction must reach before a rule considers it
+    'large' for THIS account - whichever is bigger: the fixed floor (so
+    trivial accounts aren't flagged over pocket change), or a fraction of
+    this account's own scale (so a large-balance account isn't flagged over
+    an amount that's routine for them)."""
+    return max(absolute_floor, scale * fraction)
+
 
 # ---- Tunable thresholds - adjust these based on what you see in testing ----
 VELOCITY_WINDOW_MINUTES = 10
 VELOCITY_MAX_TRANSACTIONS = 3
 
-NEW_COUNTERPARTY_MIN_AMOUNT = 50000
+# Rule 2: new counterparty + large amount - now scaled to account size
+NEW_COUNTERPARTY_MIN_FRACTION = 0.15   # 15% of this account's scale
+NEW_COUNTERPARTY_ABS_FLOOR = 20000     # ...but never below this fixed floor
 
-LARGE_FRACTION_OF_BALANCE = 0.9
-BALANCE_DRAIN_MIN_AMOUNT = 20000
+LARGE_FRACTION_OF_BALANCE = 0.9          # rule 3 - already relative, unchanged
+BALANCE_DRAIN_MIN_AMOUNT = 20000         # small fixed floor, filters trivial balances only
 
-AMOUNT_MULTIPLIER_VS_AVERAGE = 5
-ANOMALOUS_AMOUNT_MIN_FLOOR = 20000
+AMOUNT_MULTIPLIER_VS_AVERAGE = 5          # rule 5 - already relative to this account's own average
+ANOMALOUS_AMOUNT_MIN_FLOOR = 20000        # small fixed floor, filters trivial averages only
 
 REPEAT_COUNTERPARTY_WINDOW_MINUTES = 15
 REPEAT_COUNTERPARTY_MAX_COUNT = 2
 
-ROUND_AMOUNT_THRESHOLD = 50000
+# Rule 7: round large amount - now scaled to account size
+ROUND_AMOUNT_FRACTION = 0.15
+ROUND_AMOUNT_ABS_FLOOR = 20000
 
 # ATM password attempts: the frontend allows 3 total tries before locking the
 # card. 2+ wrong attempts before the successful one is treated as suspicious.
 FAILED_PASSWORD_ATTEMPTS_THRESHOLD = 2
 
 RAPID_DRAIN_WINDOW_MINUTES = 10
-RAPID_DRAIN_FRACTION = 0.9
-RAPID_DRAIN_MIN_TOTAL = 20000
+RAPID_DRAIN_FRACTION = 0.9                # rule 9 - already relative, unchanged
+RAPID_DRAIN_MIN_TOTAL = 20000             # small fixed floor, filters trivial balances only
 
 FAN_OUT_WINDOW_MINUTES = 20
 FAN_OUT_MIN_DISTINCT_RECEIVERS = 4
 
 DORMANT_DAYS_THRESHOLD = 90
-DORMANT_MIN_AMOUNT = 20000
+# Rule 11: dormant account reactivated - now scaled to account size
+DORMANT_MIN_FRACTION = 0.10
+DORMANT_ABS_FLOOR = 15000
 
 NEW_ACCOUNT_MAX_TX_COUNT = 5
 NEW_ACCOUNT_MAX_AGE_DAYS = 30
-NEW_ACCOUNT_MIN_AMOUNT = 50000
+# Rule 12: large transfer from a new/young account - now scaled to account size
+NEW_ACCOUNT_MIN_FRACTION = 0.15
+NEW_ACCOUNT_ABS_FLOOR = 20000
 
 SPIKE_MULTIPLIER_VS_PREVIOUS = 20
-SPIKE_MIN_AMOUNT = 20000
+# Rule 13: sudden spike vs previous transaction - floor now scaled to account size
+SPIKE_MIN_FRACTION = 0.10
+SPIKE_ABS_FLOOR = 15000
 
 RECENT_FRAUD_WINDOW_HOURS = 1
 RECENT_FRAUD_MAX_COUNT = 3
 
-DAILY_SPEND_LIMIT = 200000
+# Rule 15: high total spending today - now scaled to account size
+DAILY_SPEND_FRACTION = 0.5                # 50% of this account's scale, in one day
+DAILY_SPEND_ABS_FLOOR = 100000
 
-# Receiver lock: same rolling-window "lock" pattern as the ATM card lock
-# below, but on the receiving side. 3+ fraud-flagged transactions TO this
-# receiver (any transaction type, any sender) within a 2-day window reads as
-# "this account is temporarily locked from receiving". Rolling window, not a
-# stored lock timestamp - self-clears once old fraud incidents age out past
-# RECEIVER_LOCK_WINDOW_DAYS and the count drops back under the threshold.
+# Receiver lock: same rolling-window "lock" pattern as the ATM card lock,
+# but on the receiving side. 3+ fraud-flagged transactions TO this receiver
+# within a 2-day window reads as "this account is temporarily locked from
+# receiving". Rolling window, not a stored lock timestamp - self-clears once
+# old fraud incidents age out and the count drops back under the threshold.
 RECEIVER_LOCK_FRAUD_COUNT_THRESHOLD = 3
 RECEIVER_LOCK_WINDOW_DAYS = 2
 
 
 def _as_naive_utc(dt):
     """Normalize a timestamp to a naive UTC datetime so every window
-    comparison in this module is done on the same clock.
-
-    Your DB column is TIMESTAMPTZ and stores the correct offset (e.g.
-    `2026-07-18 18:02:23.62653+05`), so the driver hands this back as a
-    timezone-AWARE datetime with that +05 offset attached - the value itself
-    is correct. The only mistake would be dropping that offset instead of
-    applying it: `dt.replace(tzinfo=None)` on an aware `18:02:23+05` value
-    would silently treat it as `18:02:23 UTC`, a 5-hour error - the same bug
-    as before, just moved from the SQL layer into Python. `astimezone(utc)`
-    actually shifts the wall-clock value by that offset first, THEN drops
-    the tzinfo, so `18:02:23+05` correctly becomes `13:02:23` naive UTC -
-    matching what `datetime.utcnow()` produces below.
+    comparison in this module is done on the same clock. If the column is
+    timezone-aware (e.g. TIMESTAMPTZ), shift the wall-clock value by its
+    offset first, THEN drop the tzinfo - don't just strip tzinfo directly,
+    which would silently misinterpret e.g. `18:02:23+05` as `18:02:23 UTC`
+    instead of the correct `13:02:23 UTC`.
     """
     if dt is None:
         return None
@@ -151,9 +114,9 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
                     failed_password_attempts: int = 0):
     """
     Runs all rules for one transaction attempt and scores them.
-    Returns (any_rule_triggered: bool, reasons: list[str]) - same signature
-    as before, but "triggered" now means the combined severity score reached
-    BLOCK_SCORE_THRESHOLD, not just "at least one rule fired".
+    Returns (any_rule_triggered: bool, reasons: list[str]) - "triggered"
+    means the combined severity score reached BLOCK_SCORE_THRESHOLD, not
+    just "at least one rule fired".
     """
     if type_ in NON_SCORED_TYPES:
         return (False, [])
@@ -164,10 +127,22 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
     # ---- Single fetch of this sender's history, reused by every rule below.
     # Excludes PAYMENT/DEBIT rows so routine bill payments and merchant
     # checkouts never inflate the score of an unrelated transfer/withdrawal.
-    # All time-window filtering happens here in Python (see module docstring)
-    # instead of inside the SQL query.
     all_sender_tx = db.query(Transaction).filter(Transaction.sender_id == sender.id).all()
     scored_sender_tx = [t for t in all_sender_tx if t.type not in NON_SCORED_TYPES]
+
+    # Legit-only subset: a blocked transaction never actually moved money,
+    # so it shouldn't count toward "this account's average size" or "total
+    # spent today". Used for the average (rule 5), rapid-drain total
+    # (rule 9), daily total (rule 15), and the account-scale calculation.
+    legit_scored_tx = [t for t in scored_sender_tx if t.prediction == "legit"]
+    past_amounts_legit = [t.amount for t in legit_scored_tx]
+    avg_legit_amount = sum(past_amounts_legit) / len(past_amounts_legit) if past_amounts_legit else 0
+
+    # All attempts (including blocked ones) - used where the signal is about
+    # ATTEMPT PATTERNS/experience rather than real money moved.
+    past_amounts_all = [t.amount for t in scored_sender_tx]
+
+    account_scale = _account_scale(sender.balance, avg_legit_amount)
 
     # ---- Rule 1 [MEDIUM]: Velocity - too many transactions in a short window ----
     velocity_window_start = now - timedelta(minutes=VELOCITY_WINDOW_MINUTES)
@@ -181,19 +156,23 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"{VELOCITY_WINDOW_MINUTES} minutes (limit {VELOCITY_MAX_TRANSACTIONS})."
         ))
 
-    # ---- Rule 2 [MEDIUM]: New/unfamiliar counterparty + large amount ----
+    # ---- Rule 2 [MEDIUM]: New/unfamiliar counterparty + large amount (scaled) ----
     if receiver is not None:
         seen_before = db.query(Transaction).filter(
             Transaction.sender_id == sender.id,
             Transaction.receiver_id == receiver.id,
         ).first() is not None
-        if not seen_before and amount >= NEW_COUNTERPARTY_MIN_AMOUNT:
+        new_counterparty_threshold = _scaled_threshold(
+            account_scale, NEW_COUNTERPARTY_MIN_FRACTION, NEW_COUNTERPARTY_ABS_FLOOR
+        )
+        if not seen_before and amount >= new_counterparty_threshold:
             fired.append((SEVERITY_MEDIUM,
-                "New-counterparty rule: first-ever transaction to this account, "
-                "combined with a large amount."
+                f"New-counterparty rule: first-ever transaction to this account, "
+                f"combined with a large amount ({CURRENCY_SYMBOL} {amount:,.0f})."
             ))
 
     # ---- Rule 3 [HIGH]: Large fraction of balance moved at once ----
+    # Already relative (a % of this account's own balance) - unchanged.
     if (
         sender.balance > 0
         and amount >= BALANCE_DRAIN_MIN_AMOUNT
@@ -215,17 +194,16 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 5 [MEDIUM]: Amount far above this account's own typical size ----
-    past_amounts = [t.amount for t in scored_sender_tx]
-    if len(past_amounts) >= 3:
-        avg_amount = sum(past_amounts) / len(past_amounts)
+    # Already relative (vs. this account's own average LEGIT transaction) - unchanged.
+    if len(past_amounts_legit) >= 3:
         if (
-            avg_amount > 0
+            avg_legit_amount > 0
             and amount >= ANOMALOUS_AMOUNT_MIN_FLOOR
-            and amount >= avg_amount * AMOUNT_MULTIPLIER_VS_AVERAGE
+            and amount >= avg_legit_amount * AMOUNT_MULTIPLIER_VS_AVERAGE
         ):
             fired.append((SEVERITY_MEDIUM,
                 f"Anomalous-amount rule: this transaction ({CURRENCY_SYMBOL} {amount:,.0f}) is over "
-                f"{AMOUNT_MULTIPLIER_VS_AVERAGE}x this account's average of {CURRENCY_SYMBOL} {avg_amount:,.0f}."
+                f"{AMOUNT_MULTIPLIER_VS_AVERAGE}x this account's average of {CURRENCY_SYMBOL} {avg_legit_amount:,.0f}."
             ))
 
     # ---- Rule 6 [MEDIUM]: Repeated transactions to the same counterparty ----
@@ -243,17 +221,20 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
                 f"account within {REPEAT_COUNTERPARTY_WINDOW_MINUTES} minutes (possible structuring)."
             ))
 
-    # ---- Rule 7 [LOW]: Suspiciously round large amount ----
-    if amount >= ROUND_AMOUNT_THRESHOLD and amount % 10000 == 0:
+    # ---- Rule 7 [LOW]: Suspiciously round large amount (scaled) ----
+    round_amount_threshold = _scaled_threshold(
+        account_scale, ROUND_AMOUNT_FRACTION, ROUND_AMOUNT_ABS_FLOOR
+    )
+    if amount >= round_amount_threshold and amount % 10000 == 0:
         fired.append((SEVERITY_LOW,
             f"Round-amount rule: {CURRENCY_SYMBOL} {amount:,.0f} is an unusually round figure for a "
             f"transaction this large."
         ))
 
     # ---- Rule 8a [HIGH]: New IP compared to this account's last transaction ----
-    # IP change blocks ALONE - session hijacking / credential theft is typically
-    # used from a different network than the real account owner's. Only fires
-    # once last_ip is already on record (never on a user's very first transaction).
+    # Blocks ALONE - session hijacking/credential theft typically comes from a
+    # different network than the real account owner's. Only fires once
+    # last_ip is already on record (never on a user's very first transaction).
     if ip_address and getattr(sender, "last_ip", None) and sender.last_ip != ip_address:
         fired.append((SEVERITY_HIGH,
             "New-IP rule: this transaction came from a different IP address "
@@ -261,8 +242,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 8b [LOW]: New device compared to this account's last transaction ----
-    # Stays weak alone - switching phones/browsers is common and usually innocent,
-    # unlike an IP change. Only meaningful combined with another signal.
+    # Stays weak alone - switching phones/browsers is common and usually innocent.
     if device and getattr(sender, "last_device", None) and sender.last_device != device:
         fired.append((SEVERITY_LOW,
             "New-device rule: this transaction came from a different device/browser "
@@ -270,9 +250,11 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 9 [HIGH]: Rapid balance depletion across multiple transactions ----
+    # Already relative (a % of this account's own balance) - unchanged. Only
+    # sums LEGIT transactions, since blocked ones never actually moved money.
     drain_window_start = now - timedelta(minutes=RAPID_DRAIN_WINDOW_MINUTES)
     total_sent_recently = sum(
-        t.amount for t in scored_sender_tx
+        t.amount for t in legit_scored_tx
         if _as_naive_utc(t.timestamp) and _as_naive_utc(t.timestamp) >= drain_window_start
     ) + amount
     if (
@@ -298,38 +280,48 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"recipients within {FAN_OUT_WINDOW_MINUTES} minutes."
         ))
 
-    # ---- Rule 11 [MEDIUM]: Dormant account suddenly reactivated ----
-    # "Last transaction" here means the last SCORED (non-exempt) transaction -
-    # paying a routine bill doesn't count as the account "waking up" for the
-    # purposes of a transfer or withdrawal.
+    # ---- Rule 11 [MEDIUM]: Dormant account suddenly reactivated (scaled) ----
+    # "Last transaction" here means the last SCORED (non-exempt) attempt,
+    # including blocked ones - any attempt at all means the account wasn't
+    # truly dormant. The amount floor below is what's scaled.
     last_tx = max(scored_sender_tx, key=lambda t: t.timestamp) if scored_sender_tx else None
+    dormant_amount_threshold = _scaled_threshold(
+        account_scale, DORMANT_MIN_FRACTION, DORMANT_ABS_FLOOR
+    )
     if last_tx and last_tx.timestamp:
         idle_days = (now - _as_naive_utc(last_tx.timestamp)).days
-        if idle_days >= DORMANT_DAYS_THRESHOLD and amount >= DORMANT_MIN_AMOUNT:
+        if idle_days >= DORMANT_DAYS_THRESHOLD and amount >= dormant_amount_threshold:
             fired.append((SEVERITY_MEDIUM,
                 f"Dormant-account rule: first transaction after {idle_days} days of "
                 f"inactivity, for {CURRENCY_SYMBOL} {amount:,.0f}."
             ))
 
-    # ---- Rule 12 [MEDIUM]: Large transfer from a new/young account ----
-    past_tx_count = len(past_amounts)
+    # ---- Rule 12 [MEDIUM]: Large transfer from a new/young account (scaled) ----
+    # Transaction count uses ALL attempts (including blocked) as a proxy for
+    # how established/experienced this account is - a blocked attempt still
+    # means the account has been used before.
+    past_tx_count = len(past_amounts_all)
     account_age_days = (
         (now - _as_naive_utc(sender.created_at)).days
         if getattr(sender, "created_at", None) else None
+    )
+    new_account_threshold = _scaled_threshold(
+        account_scale, NEW_ACCOUNT_MIN_FRACTION, NEW_ACCOUNT_ABS_FLOOR
     )
     if (
         past_tx_count < NEW_ACCOUNT_MAX_TX_COUNT
         and account_age_days is not None
         and account_age_days <= NEW_ACCOUNT_MAX_AGE_DAYS
-        and amount >= NEW_ACCOUNT_MIN_AMOUNT
+        and amount >= new_account_threshold
     ):
         fired.append((SEVERITY_MEDIUM,
             f"New-account rule: account is {account_age_days} days old with only "
             f"{past_tx_count} prior transactions, now sending {CURRENCY_SYMBOL} {amount:,.0f}."
         ))
 
-    # ---- Rule 13 [MEDIUM]: Sudden spike vs. the immediately previous transaction ----
-    if last_tx and amount >= SPIKE_MIN_AMOUNT and last_tx.amount > 0:
+    # ---- Rule 13 [MEDIUM]: Sudden spike vs. the immediately previous transaction (floor scaled) ----
+    spike_floor = _scaled_threshold(account_scale, SPIKE_MIN_FRACTION, SPIKE_ABS_FLOOR)
+    if last_tx and amount >= spike_floor and last_tx.amount > 0:
         if amount >= last_tx.amount * SPIKE_MULTIPLIER_VS_PREVIOUS:
             fired.append((SEVERITY_MEDIUM,
                 f"Transaction-spike rule: {CURRENCY_SYMBOL} {amount:,.0f} is over "
@@ -354,33 +346,34 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"already blocked in the last {RECENT_FRAUD_WINDOW_HOURS} hour(s)."
         ))
 
-    # ---- Rule 15 [MEDIUM]: High total spending today ----
+    # ---- Rule 15 [MEDIUM]: High total spending today (scaled) ----
+    # Only sums LEGIT transactions - blocked ones never actually left the account.
     today_start = datetime.combine(now.date(), datetime.min.time())
     daily_total = sum(
-        t.amount for t in scored_sender_tx
+        t.amount for t in legit_scored_tx
         if _as_naive_utc(t.timestamp) and _as_naive_utc(t.timestamp) >= today_start
     ) + amount
-    if daily_total >= DAILY_SPEND_LIMIT:
+    daily_spend_threshold = _scaled_threshold(
+        account_scale, DAILY_SPEND_FRACTION, DAILY_SPEND_ABS_FLOOR
+    )
+    if daily_total >= daily_spend_threshold:
         fired.append((SEVERITY_MEDIUM,
             f"Daily-limit rule: {CURRENCY_SYMBOL} {daily_total:,.0f} sent today across all "
-            f"transactions, exceeding the normal daily threshold."
+            f"transactions, exceeding this account's normal daily threshold."
         ))
 
     # ---- Rule 16 [HIGH]: Receiver lock - repeated recent fraud landing on this account ----
-    # Mirrors the ATM card-lock rule (4), but for the receiving side: 3+
+    # Mirrors the ATM card-lock pattern, but for the receiving side: 3+
     # fraud-flagged transactions TO this receiver within a 2-day rolling
-    # window - blocks alone, like a temporary receive-side freeze. Self-clears
-    # as old incidents age past RECEIVER_LOCK_WINDOW_DAYS and the count drops
-    # back under the threshold.
+    # window blocks alone, like a temporary receive-side freeze. Self-clears
+    # as old incidents age past RECEIVER_LOCK_WINDOW_DAYS.
     #
     # Restricted to TRANSFER only. CASH_OUT's "receiver" is the shared
     # ATM/agent phone number - every customer's withdrawal lands on the same
-    # account, so a handful of unrelated blocked withdrawals (velocity,
-    # wrong password, etc.) would rack up 3+ fraud hits on that one shared
-    # number and lock ATM withdrawals for every customer, not just an
-    # account actually being used as a fraud drop point. PAYMENT/DEBIT are
-    # already excluded entirely by the NON_SCORED_TYPES check at the top of
-    # this function, so TRANSFER is the only type this should ever apply to.
+    # account, so unrelated blocked withdrawals would rack up fraud hits on
+    # that one shared number and lock ATM withdrawals for everyone, not just
+    # an account actually being used as a fraud drop point. PAYMENT/DEBIT are
+    # already excluded entirely by NON_SCORED_TYPES.
     if receiver is not None and type_ == "TRANSFER":
         receiver_lock_window_start = now - timedelta(days=RECEIVER_LOCK_WINDOW_DAYS)
         receiver_tx = db.query(Transaction).filter(Transaction.receiver_id == receiver.id).all()
@@ -404,6 +397,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
 
     if fired:
         print(f"[RULES] {len(fired)} rule(s) fired, total score={total_score} "
-              f"(threshold={BLOCK_SCORE_THRESHOLD}) -> {'BLOCKED' if triggered else 'allowed (below threshold)'}")
+              f"(threshold={BLOCK_SCORE_THRESHOLD}, account_scale={account_scale:,.0f}) "
+              f"-> {'BLOCKED' if triggered else 'allowed (below threshold)'}")
 
     return (triggered, reasons if triggered else [])
