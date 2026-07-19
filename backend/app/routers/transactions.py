@@ -3,7 +3,9 @@ Core transaction flow (updated for phone-number-based transfers):
 1. A logged-in user submits a transaction (destination phone number, amount, type)
 2. Backend resolves sender from the JWT (never trusts a client-supplied sender id)
 3. Backend looks up the receiver by phone number - like a mobile wallet account number
-4. Computes engineered features and sends them to the trained XGBoost model
+4. Computes the model's fraud probability, then hands it to the rules engine
+   as "Rule 0" - the rules engine (not this file) makes the final fraud/legit
+   call, since the model's threshold check now lives inside evaluate_rules.
 5. If flagged as fraud -> transaction is logged, balances are NOT updated,
    and a fraud_log entry is created for the admin portal
 6. If legit -> balances update normally, transaction is logged as "legit"
@@ -74,34 +76,37 @@ def create_transaction(
     old_balance_dest = receiver.balance
     new_balance_dest = receiver.balance + tx_in.amount
 
-    probability, is_fraud = predict_fraud(
+    # predict_fraud() still returns (probability, is_fraud) - is_fraud here
+    # is intentionally unused (prefixed with _). The rules engine now owns
+    # the actual threshold decision as "Rule 0", so using the model's OWN
+    # is_fraud here too would double-count its influence.
+    probability, _model_is_fraud = predict_fraud(
         tx_in.type, tx_in.amount,
         old_balance_orig, new_balance_orig,
         old_balance_dest, new_balance_dest,
     )
 
-    
-# -------------------------------
-# Rule-Based Fraud Detection
-# -------------------------------
-
+    # -------------------------------
+    # Rule-Based Fraud Detection (includes the model's own probability as Rule 0)
+    # -------------------------------
     ip_address = request.client.host if request.client else None
-
     device = request.headers.get("user-agent")
 
     rule_triggered, rule_reasons = evaluate_rules(
-    db,
-    current_user,
-    receiver,
-    tx_in.amount,
-    tx_in.type,
-    ip_address=ip_address,
-    device=device,
-    failed_password_attempts=getattr(tx_in, "failed_password_attempts", 0) or 0,
+        db,
+        current_user,
+        receiver,
+        tx_in.amount,
+        tx_in.type,
+        probability=probability,
+        ip_address=ip_address,
+        device=device,
+        failed_password_attempts=getattr(tx_in, "failed_password_attempts", 0) or 0,
     )
 
-# Final Decision
-    final_is_fraud = is_fraud or rule_triggered
+    # Final decision - evaluate_rules() is the single source of truth now,
+    # since Rule 0 inside it already folds in the model's probability.
+    final_is_fraud = rule_triggered
 
     transaction = Transaction(
         sender_id=sender.id,
@@ -113,25 +118,18 @@ def create_transaction(
         old_balance_orig=old_balance_orig,
         new_balance_orig=new_balance_orig,
         old_balance_dest=old_balance_dest,
-        new_balance_dest=new_balance_dest, )
-
-
+        new_balance_dest=new_balance_dest,
+    )
 
     db.add(transaction)
     db.commit()
     db.refresh(transaction)
 
     if final_is_fraud:
-        reason_parts = []
-
-        if is_fraud:
-            reason_parts.append(
-            f"ML model: {tx_in.type} of amount {tx_in.amount:.2f} "
-            f"scored {probability:.4f} (>= threshold {THRESHOLD}).")
-
-            # Rule Engine Reasons
-        if rule_triggered:
-            reason_parts.extend(rule_reasons)
+        # rule_reasons already contains the model's own text (from Rule 0)
+        # whenever the model contributed to the block, plus every other
+        # rule that fired - no separate "ML model: ..." block needed here.
+        reason_parts = list(rule_reasons) if rule_reasons else ["Blocked by fraud detection engine."]
 
         fraud_log = FraudLog(
             transaction_id=transaction.id,
@@ -164,13 +162,13 @@ def create_transaction(
             transaction_type=tx_in.type, amount=tx_in.amount,
             is_fraud=False, probability=probability,
         )
-    
+
     sender.last_ip = ip_address
     sender.last_device = device
 
     print("IP:", ip_address)
     print("Device:", device)
-    db.commit()    
+    db.commit()
 
     return transaction
 

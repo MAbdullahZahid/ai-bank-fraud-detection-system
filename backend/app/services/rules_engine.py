@@ -1,19 +1,102 @@
+"""
+Rule-based fraud checks that run TOGETHER with the ML model's prediction in
+ONE combined score. The model's probability is Rule 0 below - scored and
+logged exactly like every other rule, not a separate bypassable check
+sitting outside this file.
+
+WHY THE MODEL IS FOLDED IN AS A RULE, NOT A SEPARATE GATE:
+Previously the flow was `is_fraud = probability >= THRESHOLD`, computed
+entirely outside this file, then OR'd with whatever this file returned. That
+meant the model's contribution was invisible here - nothing in `reasons`
+ever showed it, even when it was the deciding factor. Converting the raw
+probability into a severity weight and appending it to the same `fired`
+list every other rule uses means it shows up in the same [RULES] log line
+and the same fraud_logs.reason text as everything else.
+
+ACCOUNT-SCALE-RELATIVE THRESHOLDS:
+Several rules compare an amount against a per-account "scale" instead of a
+flat currency figure:
+
+    account_scale = max(current balance, this account's own average LEGIT
+                         transaction size, a small absolute floor)
+
+    threshold = max(small absolute floor, FRACTION * account_scale)
+
+Using max(balance, average) - not just one or the other - matters: an
+account with a large balance but a habit of small transfers still has a
+large *scale*, so a genuinely large one-off payment for that account isn't
+flagged just because their historical average happens to be small. An
+account with a big average but currently low balance is protected the same
+way in reverse.
+
+LEGIT-ONLY AMOUNT AGGREGATION:
+A blocked ("fraud") transaction never actually moves money - the balance is
+never touched. So summing a blocked transaction's amount into "this
+account's average size" or "total spent today" would count money that
+never left the account. The average (rule 5), rapid-drain total (rule 9),
+daily total (rule 15), and the account-scale calculation all only sum
+transactions where prediction == "legit". Rules about ATTEMPT PATTERNS
+rather than amounts (velocity, repeat-counterparty, fan-out, dormancy
+timing, new-account experience) still count every attempt regardless of
+outcome, since a burst of blocked attempts is itself a behavioral signal.
+
+SCORING MODEL (not plain OR):
+Each rule that fires contributes a severity weight (HIGH=3, MEDIUM=2,
+LOW=1) to one running total, INCLUDING Rule 0 (the model). The transaction
+is only blocked once the total reaches BLOCK_SCORE_THRESHOLD:
+  - A high-confidence model prediction, or any single HIGH-severity rule,
+    blocks alone.
+  - A single MEDIUM or LOW rule does not block alone.
+  - Multiple weaker signals stacking together (including a medium-confidence
+    model score plus one other MEDIUM rule) can still cross the threshold.
+
+PAYMENT and DEBIT transactions are exempt from the BEHAVIORAL rules below
+(velocity, new-counterparty, fan-out, etc.) - counterparties for those types
+come from a curated, vetted list rather than free-text phone numbers. The
+model's own contribution (Rule 0) still applies to every transaction type,
+since the model was trained across all types and its score is meaningful
+regardless of type.
+
+IMPORTANT - the PAYMENT/DEBIT exemption is enforced in TWO places:
+  1. Behavioral rules are skipped entirely for the CURRENT transaction if
+     it's a PAYMENT or DEBIT (Rule 0 still runs first, before this check).
+  2. Every query that looks at a sender's TRANSACTION HISTORY to score a
+     *different* (non-exempt) transaction also excludes PAYMENT/DEBIT rows,
+     so paying a bill never inflates a later transfer's velocity/fan-out/
+     daily-limit numbers.
+
+TIMESTAMP HANDLING:
+All "within N minutes/hours/days" windows are computed in Python against a
+single `now = datetime.utcnow()` captured once per evaluation, after
+normalizing every timestamp to a naive UTC value via `_as_naive_utc` - this
+avoids relying on whether the DB driver hands back timezone-aware or naive
+datetimes for a TIMESTAMPTZ column.
+"""
+
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.models.transaction import Transaction
 from app.constants import CURRENCY_SYMBOL
 
-
-SEVERITY_HIGH = 3     # strong enough to block completely alone
-SEVERITY_MEDIUM = 2   # real signal, but not alone-worthy
-SEVERITY_LOW = 1      # weak signal, only meaningful combined with others
+# ---- Severity weights and the score needed to actually block ----
+SEVERITY_HIGH = 3
+SEVERITY_MEDIUM = 2
+SEVERITY_LOW = 1
 BLOCK_SCORE_THRESHOLD = 3
 
-# Transaction types that never get scored by this engine, and whose history
-# is excluded when scoring OTHER (non-exempt) transactions too.
-NON_SCORED_TYPES = ("PAYMENT", "DEBIT")
+# Behavioral rules don't apply to these types - Rule 0 (the model) still does.
+NON_SCORED_TYPES = ("PAYMENT", "DEBIT","CASH_IN")
 
+# ---- Rule 0: the ML model's own probability, converted into severity ----
+# NOTE: since this file now owns the fraud/legit decision entirely, the old
+# separate `THRESHOLD` check in transactions.py (`is_fraud = probability >=
+# THRESHOLD`) should be REMOVED - it would otherwise silently duplicate/
+# conflict with this. See the integration note at the bottom of this file.
+MODEL_HIGH_PROBABILITY = 0.70
+MODEL_MEDIUM_PROBABILITY = 0.40
+MODEL_LOW_PROBABILITY = 0.15
 
+# ---- Account-scale calculation ----
 ACCOUNT_SCALE_FLOOR = 5000
 
 
@@ -22,86 +105,87 @@ def _account_scale(sender_balance: float, legit_avg_amount: float) -> float:
 
 
 def _scaled_threshold(scale: float, fraction: float, absolute_floor: float) -> float:
-    """The amount a transaction must reach before a rule considers it
-    'large' for THIS account - whichever is bigger: the fixed floor (so
-    trivial accounts aren't flagged over pocket change), or a fraction of
-    this account's own scale (so a large-balance account isn't flagged over
-    an amount that's routine for them)."""
     return max(absolute_floor, scale * fraction)
 
 
-# ---- Tunable thresholds - adjust these based on what you see in testing ----
+# ---- Tunable thresholds ----
 VELOCITY_WINDOW_MINUTES = 10
 VELOCITY_MAX_TRANSACTIONS = 3
 
-# Rule 2: new counterparty + large amount - now scaled to account size
-NEW_COUNTERPARTY_MIN_FRACTION = 0.15   # 15% of this account's scale
-NEW_COUNTERPARTY_ABS_FLOOR = 20000     # ...but never below this fixed floor
+NEW_COUNTERPARTY_MIN_FRACTION = 0.15
+NEW_COUNTERPARTY_ABS_FLOOR = 20000
 
-LARGE_FRACTION_OF_BALANCE = 0.9          # rule 3 - already relative, unchanged
-BALANCE_DRAIN_MIN_AMOUNT = 20000         # small fixed floor, filters trivial balances only
+LARGE_FRACTION_OF_BALANCE = 0.9           # rule 3 default fraction - now only a fallback, see helper below
+BALANCE_DRAIN_MIN_AMOUNT = 200000          # fixed floor - filters trivial balances only
 
-AMOUNT_MULTIPLIER_VS_AVERAGE = 5          # rule 5 - already relative to this account's own average
-ANOMALOUS_AMOUNT_MIN_FLOOR = 20000        # small fixed floor, filters trivial averages only
+# Rule 3's fraction threshold now scales with balance instead of being flat:
+#   - Small balances: near-total drains are ordinary (someone spending down
+#     most of a ₨50,000 balance isn't suspicious) - so allow a HIGHER % before flagging.
+#   - Large balances: even a smaller % is a huge absolute sum - so flag at a LOWER %.
+# Between the two cutoffs, the threshold interpolates linearly.
+BALANCE_DRAIN_LOW_BALANCE_CUTOFF = 100000       # at/below this balance -> lenient threshold
+BALANCE_DRAIN_HIGH_BALANCE_CUTOFF = 5000000     # at/above this balance -> strict threshold
+BALANCE_DRAIN_FRACTION_FOR_LOW_BALANCE = 0.95   # e.g. ₨50,000 balance: only flag above 95% moved
+BALANCE_DRAIN_FRACTION_FOR_HIGH_BALANCE = 0.50  # e.g. ₨2-crore balance: flag once 50%+ moved
+
+
+def _balance_drain_fraction_threshold(balance: float) -> float:
+    if balance <= BALANCE_DRAIN_LOW_BALANCE_CUTOFF:
+        return BALANCE_DRAIN_FRACTION_FOR_LOW_BALANCE
+    if balance >= BALANCE_DRAIN_HIGH_BALANCE_CUTOFF:
+        return BALANCE_DRAIN_FRACTION_FOR_HIGH_BALANCE
+    span = BALANCE_DRAIN_HIGH_BALANCE_CUTOFF - BALANCE_DRAIN_LOW_BALANCE_CUTOFF
+    position = (balance - BALANCE_DRAIN_LOW_BALANCE_CUTOFF) / span
+    return BALANCE_DRAIN_FRACTION_FOR_LOW_BALANCE + position * (
+        BALANCE_DRAIN_FRACTION_FOR_HIGH_BALANCE - BALANCE_DRAIN_FRACTION_FOR_LOW_BALANCE
+    )
+
+AMOUNT_MULTIPLIER_VS_AVERAGE = 5           # rule 5 - already relative to this account's own average
+ANOMALOUS_AMOUNT_MIN_FLOOR = 20000         # fixed floor - filters trivial averages only
 
 REPEAT_COUNTERPARTY_WINDOW_MINUTES = 15
 REPEAT_COUNTERPARTY_MAX_COUNT = 2
 
-# Rule 7: round large amount - now scaled to account size
 ROUND_AMOUNT_FRACTION = 0.15
 ROUND_AMOUNT_ABS_FLOOR = 20000
 
-# ATM password attempts: the frontend allows 3 total tries before locking the
-# card. 2+ wrong attempts before the successful one is treated as suspicious.
 FAILED_PASSWORD_ATTEMPTS_THRESHOLD = 2
 
 RAPID_DRAIN_WINDOW_MINUTES = 10
-RAPID_DRAIN_FRACTION = 0.9                # rule 9 - already relative, unchanged
-RAPID_DRAIN_MIN_TOTAL = 20000             # small fixed floor, filters trivial balances only
+# Fraction threshold now comes from the same balance-tiered helper as rule 3
+# (_balance_drain_fraction_threshold) - lenient for small balances, strict
+# for large ones. No separate flat constant needed here anymore.
+RAPID_DRAIN_MIN_TOTAL = 20000              # fixed floor - filters trivial balances only
 
 FAN_OUT_WINDOW_MINUTES = 20
 FAN_OUT_MIN_DISTINCT_RECEIVERS = 4
 
 DORMANT_DAYS_THRESHOLD = 90
-# Rule 11: dormant account reactivated - now scaled to account size
 DORMANT_MIN_FRACTION = 0.10
 DORMANT_ABS_FLOOR = 15000
 
 NEW_ACCOUNT_MAX_TX_COUNT = 5
 NEW_ACCOUNT_MAX_AGE_DAYS = 30
-# Rule 12: large transfer from a new/young account - now scaled to account size
 NEW_ACCOUNT_MIN_FRACTION = 0.15
 NEW_ACCOUNT_ABS_FLOOR = 20000
 
 SPIKE_MULTIPLIER_VS_PREVIOUS = 20
-# Rule 13: sudden spike vs previous transaction - floor now scaled to account size
 SPIKE_MIN_FRACTION = 0.10
 SPIKE_ABS_FLOOR = 15000
 
 RECENT_FRAUD_WINDOW_HOURS = 1
 RECENT_FRAUD_MAX_COUNT = 3
 
-# Rule 15: high total spending today - now scaled to account size
-DAILY_SPEND_FRACTION = 0.5                # 50% of this account's scale, in one day
-DAILY_SPEND_ABS_FLOOR = 100000
+DAILY_SPEND_FRACTION = 0.5
+DAILY_SPEND_ABS_FLOOR = 1000000
 
-# Receiver lock: same rolling-window "lock" pattern as the ATM card lock,
-# but on the receiving side. 3+ fraud-flagged transactions TO this receiver
-# within a 2-day window reads as "this account is temporarily locked from
-# receiving". Rolling window, not a stored lock timestamp - self-clears once
-# old fraud incidents age out and the count drops back under the threshold.
 RECEIVER_LOCK_FRAUD_COUNT_THRESHOLD = 3
 RECEIVER_LOCK_WINDOW_DAYS = 2
 
 
 def _as_naive_utc(dt):
     """Normalize a timestamp to a naive UTC datetime so every window
-    comparison in this module is done on the same clock. If the column is
-    timezone-aware (e.g. TIMESTAMPTZ), shift the wall-clock value by its
-    offset first, THEN drop the tzinfo - don't just strip tzinfo directly,
-    which would silently misinterpret e.g. `18:02:23+05` as `18:02:23 UTC`
-    instead of the correct `13:02:23 UTC`.
-    """
+    comparison in this module is done on the same clock."""
     if dt is None:
         return None
     if dt.tzinfo is not None:
@@ -110,41 +194,61 @@ def _as_naive_utc(dt):
 
 
 def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
+                    probability: float = 0.0,
                     ip_address: str = None, device: str = None,
                     failed_password_attempts: int = 0):
     """
-    Runs all rules for one transaction attempt and scores them.
-    Returns (any_rule_triggered: bool, reasons: list[str]) - "triggered"
-    means the combined severity score reached BLOCK_SCORE_THRESHOLD, not
-    just "at least one rule fired".
-    """
-    if type_ in NON_SCORED_TYPES:
-        return (False, [])
+    Scores the ML model's probability (Rule 0) alongside every behavioral
+    rule, in one combined total. `probability` is the model's fraud
+    probability for THIS transaction - pass it in from wherever
+    predict_fraud() is called.
 
-    fired = []  # list of (severity_weight, reason_text)
+    Returns (any_rule_triggered: bool, reasons: list[str]).
+    """
+    fired = []
     now = datetime.utcnow()
 
-    # ---- Single fetch of this sender's history, reused by every rule below.
-    # Excludes PAYMENT/DEBIT rows so routine bill payments and merchant
-    # checkouts never inflate the score of an unrelated transfer/withdrawal.
+    # ---- Rule 0 [scored by probability]: the ML model's own prediction ----
+    if probability >= MODEL_HIGH_PROBABILITY:
+        fired.append((SEVERITY_HIGH,
+            f"ML model rule: fraud probability {probability:.4f} "
+            f"(>= {MODEL_HIGH_PROBABILITY} high-confidence threshold)."
+        ))
+    elif probability >= MODEL_MEDIUM_PROBABILITY:
+        fired.append((SEVERITY_MEDIUM,
+            f"ML model rule: fraud probability {probability:.4f} "
+            f"(>= {MODEL_MEDIUM_PROBABILITY} medium-confidence threshold)."
+        ))
+    elif probability >= MODEL_LOW_PROBABILITY:
+        fired.append((SEVERITY_LOW,
+            f"ML model rule: fraud probability {probability:.4f} "
+            f"(>= {MODEL_LOW_PROBABILITY} low-confidence threshold)."
+        ))
+    print(f"[RULES] ML model probability for this transaction: {probability:.4f}")
+
+    if type_ in NON_SCORED_TYPES:
+        total_score = sum(weight for weight, _ in fired)
+        reasons = [text for _, text in fired]
+        triggered = total_score >= BLOCK_SCORE_THRESHOLD
+        if fired:
+            print(f"[RULES] (PAYMENT/DEBIT - only Rule 0 applies) score={total_score} "
+                  f"(threshold={BLOCK_SCORE_THRESHOLD}) -> {'BLOCKED' if triggered else 'allowed'}")
+        return (triggered, reasons if triggered else [])
+
     all_sender_tx = db.query(Transaction).filter(Transaction.sender_id == sender.id).all()
     scored_sender_tx = [t for t in all_sender_tx if t.type not in NON_SCORED_TYPES]
 
-    # Legit-only subset: a blocked transaction never actually moved money,
-    # so it shouldn't count toward "this account's average size" or "total
-    # spent today". Used for the average (rule 5), rapid-drain total
-    # (rule 9), daily total (rule 15), and the account-scale calculation.
+    # Legit-only subset - a blocked transaction never actually moved money.
     legit_scored_tx = [t for t in scored_sender_tx if t.prediction == "legit"]
     past_amounts_legit = [t.amount for t in legit_scored_tx]
     avg_legit_amount = sum(past_amounts_legit) / len(past_amounts_legit) if past_amounts_legit else 0
 
-    # All attempts (including blocked ones) - used where the signal is about
-    # ATTEMPT PATTERNS/experience rather than real money moved.
+    # All attempts (including blocked) - used for attempt-pattern signals.
     past_amounts_all = [t.amount for t in scored_sender_tx]
 
     account_scale = _account_scale(sender.balance, avg_legit_amount)
 
-    # ---- Rule 1 [MEDIUM]: Velocity - too many transactions in a short window ----
+    # ---- Rule 1 [MEDIUM]: Velocity ----
     velocity_window_start = now - timedelta(minutes=VELOCITY_WINDOW_MINUTES)
     recent_count = sum(
         1 for t in scored_sender_tx
@@ -156,7 +260,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"{VELOCITY_WINDOW_MINUTES} minutes (limit {VELOCITY_MAX_TRANSACTIONS})."
         ))
 
-    # ---- Rule 2 [MEDIUM]: New/unfamiliar counterparty + large amount (scaled) ----
+    # ---- Rule 2 [MEDIUM]: New counterparty + large amount (scaled) ----
     if receiver is not None:
         seen_before = db.query(Transaction).filter(
             Transaction.sender_id == sender.id,
@@ -171,20 +275,21 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
                 f"combined with a large amount ({CURRENCY_SYMBOL} {amount:,.0f})."
             ))
 
-    # ---- Rule 3 [HIGH]: Large fraction of balance moved at once ----
-    # Already relative (a % of this account's own balance) - unchanged.
+    # ---- Rule 3 [HIGH]: Large fraction of balance moved at once (threshold scales with balance) ----
+    balance_drain_fraction_threshold = _balance_drain_fraction_threshold(sender.balance)
     if (
         sender.balance > 0
         and amount >= BALANCE_DRAIN_MIN_AMOUNT
-        and (amount / sender.balance) >= LARGE_FRACTION_OF_BALANCE
+        and (amount / sender.balance) >= balance_drain_fraction_threshold
     ):
         fired.append((SEVERITY_HIGH,
             f"Balance-drain rule: this transaction moves "
             f"{(amount / sender.balance) * 100:.0f}% of the account's current balance "
-            f"({CURRENCY_SYMBOL} {amount:,.0f})."
+            f"({CURRENCY_SYMBOL} {amount:,.0f}), above this account's "
+            f"{balance_drain_fraction_threshold * 100:.0f}% threshold."
         ))
 
-    # ---- Rule 4 [HIGH]: ATM password attempts - too many wrong tries before success ----
+    # ---- Rule 4 [HIGH]: ATM password attempts ----
     if failed_password_attempts >= FAILED_PASSWORD_ATTEMPTS_THRESHOLD:
         print("[RULES] ATM-password rule triggered: "
               f"{failed_password_attempts} failed password attempts before success.")
@@ -194,14 +299,13 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 5 [MEDIUM]: Amount far above this account's own typical size ----
-    # Already relative (vs. this account's own average LEGIT transaction) - unchanged.
     if len(past_amounts_legit) >= 3:
         if (
             avg_legit_amount > 0
             and amount >= ANOMALOUS_AMOUNT_MIN_FLOOR
             and amount >= avg_legit_amount * AMOUNT_MULTIPLIER_VS_AVERAGE
         ):
-            fired.append((SEVERITY_MEDIUM,
+            fired.append((SEVERITY_LOW,
                 f"Anomalous-amount rule: this transaction ({CURRENCY_SYMBOL} {amount:,.0f}) is over "
                 f"{AMOUNT_MULTIPLIER_VS_AVERAGE}x this account's average of {CURRENCY_SYMBOL} {avg_legit_amount:,.0f}."
             ))
@@ -231,18 +335,14 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"transaction this large."
         ))
 
-    # ---- Rule 8a [HIGH]: New IP compared to this account's last transaction ----
-    # Blocks ALONE - session hijacking/credential theft typically comes from a
-    # different network than the real account owner's. Only fires once
-    # last_ip is already on record (never on a user's very first transaction).
+    # ---- Rule 8a [HIGH]: New IP ----
     if ip_address and getattr(sender, "last_ip", None) and sender.last_ip != ip_address:
         fired.append((SEVERITY_HIGH,
             "New-IP rule: this transaction came from a different IP address "
             "than this account's last known IP."
         ))
 
-    # ---- Rule 8b [LOW]: New device compared to this account's last transaction ----
-    # Stays weak alone - switching phones/browsers is common and usually innocent.
+    # ---- Rule 8b [LOW]: New device ----
     if device and getattr(sender, "last_device", None) and sender.last_device != device:
         fired.append((SEVERITY_LOW,
             "New-device rule: this transaction came from a different device/browser "
@@ -250,22 +350,31 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 9 [HIGH]: Rapid balance depletion across multiple transactions ----
-    # Already relative (a % of this account's own balance) - unchanged. Only
-    # sums LEGIT transactions, since blocked ones never actually moved money.
+    # Fraction threshold scales with balance via the same helper as rule 3
+    # (_balance_drain_fraction_threshold). Only sums LEGIT transactions,
+    # since blocked ones never actually moved money.
     drain_window_start = now - timedelta(minutes=RAPID_DRAIN_WINDOW_MINUTES)
-    total_sent_recently = sum(
+    past_sent_in_window = sum(
         t.amount for t in legit_scored_tx
         if _as_naive_utc(t.timestamp) and _as_naive_utc(t.timestamp) >= drain_window_start
-    ) + amount
+    )
+    total_sent_recently = past_sent_in_window + amount
+    rapid_drain_fraction_threshold = _balance_drain_fraction_threshold(sender.balance)
     if (
         sender.balance > 0
+        # Requires at least one PRIOR legit transaction inside the window -
+        # otherwise this is just the current transaction alone reaching the
+        # threshold by itself, which is a single large transaction (already
+        # Rule 3's job), not a "multiple transactions" rapid-drain pattern.
+        and past_sent_in_window > 0
         and total_sent_recently >= RAPID_DRAIN_MIN_TOTAL
-        and total_sent_recently >= sender.balance * RAPID_DRAIN_FRACTION
+        and total_sent_recently >= sender.balance * rapid_drain_fraction_threshold
     ):
         fired.append((SEVERITY_HIGH,
             f"Rapid balance-drain rule: {CURRENCY_SYMBOL} {total_sent_recently:,.0f} sent across "
             f"multiple transactions in the last {RAPID_DRAIN_WINDOW_MINUTES} minutes - "
-            f"nearly the entire account balance."
+            f"{(total_sent_recently / sender.balance) * 100:.0f}% of the account's balance, "
+            f"above this account's {rapid_drain_fraction_threshold * 100:.0f}% threshold."
         ))
 
     # ---- Rule 10 [HIGH]: Recipient diversity (fan-out) ----
@@ -281,9 +390,6 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 11 [MEDIUM]: Dormant account suddenly reactivated (scaled) ----
-    # "Last transaction" here means the last SCORED (non-exempt) attempt,
-    # including blocked ones - any attempt at all means the account wasn't
-    # truly dormant. The amount floor below is what's scaled.
     last_tx = max(scored_sender_tx, key=lambda t: t.timestamp) if scored_sender_tx else None
     dormant_amount_threshold = _scaled_threshold(
         account_scale, DORMANT_MIN_FRACTION, DORMANT_ABS_FLOOR
@@ -297,9 +403,6 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             ))
 
     # ---- Rule 12 [MEDIUM]: Large transfer from a new/young account (scaled) ----
-    # Transaction count uses ALL attempts (including blocked) as a proxy for
-    # how established/experienced this account is - a blocked attempt still
-    # means the account has been used before.
     past_tx_count = len(past_amounts_all)
     account_age_days = (
         (now - _as_naive_utc(sender.created_at)).days
@@ -319,7 +422,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"{past_tx_count} prior transactions, now sending {CURRENCY_SYMBOL} {amount:,.0f}."
         ))
 
-    # ---- Rule 13 [MEDIUM]: Sudden spike vs. the immediately previous transaction (floor scaled) ----
+    # ---- Rule 13 [MEDIUM]: Sudden spike vs. the immediately previous transaction (scaled floor) ----
     spike_floor = _scaled_threshold(account_scale, SPIKE_MIN_FRACTION, SPIKE_ABS_FLOOR)
     if last_tx and amount >= spike_floor and last_tx.amount > 0:
         if amount >= last_tx.amount * SPIKE_MULTIPLIER_VS_PREVIOUS:
@@ -330,9 +433,6 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             ))
 
     # ---- Rule 14 [HIGH]: Multiple recent fraud blocks from this sender ----
-    # Uses ALL transaction types (not just scored_sender_tx) - a fraud flag on
-    # a merchant payment, driven by the ML model, is still a real signal about
-    # this account's recent behavior.
     fraud_window_start = now - timedelta(hours=RECENT_FRAUD_WINDOW_HOURS)
     recent_fraud_count = sum(
         1 for t in all_sender_tx
@@ -347,7 +447,6 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
         ))
 
     # ---- Rule 15 [MEDIUM]: High total spending today (scaled) ----
-    # Only sums LEGIT transactions - blocked ones never actually left the account.
     today_start = datetime.combine(now.date(), datetime.min.time())
     daily_total = sum(
         t.amount for t in legit_scored_tx
@@ -362,18 +461,7 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
             f"transactions, exceeding this account's normal daily threshold."
         ))
 
-    # ---- Rule 16 [HIGH]: Receiver lock - repeated recent fraud landing on this account ----
-    # Mirrors the ATM card-lock pattern, but for the receiving side: 3+
-    # fraud-flagged transactions TO this receiver within a 2-day rolling
-    # window blocks alone, like a temporary receive-side freeze. Self-clears
-    # as old incidents age past RECEIVER_LOCK_WINDOW_DAYS.
-    #
-    # Restricted to TRANSFER only. CASH_OUT's "receiver" is the shared
-    # ATM/agent phone number - every customer's withdrawal lands on the same
-    # account, so unrelated blocked withdrawals would rack up fraud hits on
-    # that one shared number and lock ATM withdrawals for everyone, not just
-    # an account actually being used as a fraud drop point. PAYMENT/DEBIT are
-    # already excluded entirely by NON_SCORED_TYPES.
+    # ---- Rule 16 [HIGH]: Receiver lock ----
     if receiver is not None and type_ == "TRANSFER":
         receiver_lock_window_start = now - timedelta(days=RECEIVER_LOCK_WINDOW_DAYS)
         receiver_tx = db.query(Transaction).filter(Transaction.receiver_id == receiver.id).all()
@@ -390,7 +478,6 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
                 f"recipient temporarily locked."
             ))
 
-    # ---- Score everything that fired ----
     total_score = sum(weight for weight, _ in fired)
     reasons = [text for _, text in fired]
     triggered = total_score >= BLOCK_SCORE_THRESHOLD
@@ -401,3 +488,36 @@ def evaluate_rules(db: Session, sender, receiver, amount: float, type_: str,
               f"-> {'BLOCKED' if triggered else 'allowed (below threshold)'}")
 
     return (triggered, reasons if triggered else [])
+
+
+# =============================================================================
+# INTEGRATION NOTE FOR transactions.py:
+#
+# This file now makes the ENTIRE fraud/legit decision by itself (Rule 0
+# includes the model). transactions.py needs two changes:
+#
+# 1. Pass the model's probability in:
+#
+#    rule_triggered, rule_reasons = evaluate_rules(
+#        db, current_user, receiver, tx_in.amount, tx_in.type,
+#        probability=probability,
+#        ip_address=ip_address, device=device,
+#        failed_password_attempts=getattr(tx_in, "failed_password_attempts", 0) or 0,
+#    )
+#
+# 2. Remove the old separate threshold check and OR:
+#
+#    OLD:
+#        probability, is_fraud = predict_fraud(...)
+#        ...
+#        final_is_fraud = is_fraud or rule_triggered
+#
+#    NEW:
+#        probability = predict_fraud(...)   # just the probability now
+#        final_is_fraud = rule_triggered    # the ONLY decision - Rule 0 already folded the model in
+#
+#    predict_fraud() itself may still internally compute is_fraud via
+#    THRESHOLD for logging/debugging purposes, but that value should no
+#    longer be used for the actual block/allow decision - using both would
+#    double-count the model's influence.
+# =============================================================================

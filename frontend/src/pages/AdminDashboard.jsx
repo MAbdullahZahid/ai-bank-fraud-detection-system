@@ -839,7 +839,11 @@ export default function AdminDashboard() {
                       <tr key={f.id}>
                         <td>#{f.id}</td>
                         <td>#{f.transaction_id}</td>
-                        <td>{f.amount ? `{CURRENCY_SYMBOL} ${Number(f.amount).toLocaleString()}` : "-"}</td>
+                      <td>
+  {f.amount
+    ? `${CURRENCY_SYMBOL} ${Number(f.amount).toLocaleString()}`
+    : "-"}
+</td>
                         <td>{f.model_score?.toFixed(4)}</td>
                         <td>{f.threshold}</td>
                         <td style={{ whiteSpace: "normal", fontFamily: "var(--font-body)" }}>{f.reason}</td>
