@@ -1,10 +1,3 @@
-"""
-Database connection setup.
-Connects to Postgres via DATABASE_URL from .env.
-On startup, checks which tables already exist - creates only the missing
-ones, and does nothing if the schema is already fully set up.
-"""
-
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, inspect

@@ -1,9 +1,3 @@
-"""
-Password hashing (via bcrypt directly - not passlib, which has a known
-compatibility bug with newer bcrypt versions) and JWT creation/verification
-(python-jose) for admin authentication.
-"""
-
 import os
 import bcrypt
 from datetime import datetime, timedelta

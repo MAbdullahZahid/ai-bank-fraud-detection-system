@@ -1,9 +1,3 @@
-"""
-Shared auth dependencies. Admin and User are separate identities with
-separate JWTs (each token carries a "role" claim) - a user token can never
-be used to access admin routes and vice versa.
-"""
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError

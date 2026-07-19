@@ -1,16 +1,3 @@
-"""
-Email notifications:
-- Welcome email when an admin creates a user
-- Transaction result email to the customer (success or blocked-as-fraud)
-- Fraud alert email to the bank admin whenever a transaction is blocked
-
-Tries STARTTLS (port 587) first, falls back to SSL (port 465) - some
-networks/firewalls block one or the other.
-
-If SMTP isn't configured, every function fails silently (logs to console)
-rather than blocking the transaction or user creation.
-"""
-
 import os
 import smtplib
 from email.mime.text import MIMEText

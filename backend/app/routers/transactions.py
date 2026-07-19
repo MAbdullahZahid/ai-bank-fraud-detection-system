@@ -1,19 +1,3 @@
-"""
-Core transaction flow (updated for phone-number-based transfers):
-1. A logged-in user submits a transaction (destination phone number, amount, type)
-2. Backend resolves sender from the JWT (never trusts a client-supplied sender id)
-3. Backend looks up the receiver by phone number - like a mobile wallet account number
-4. Computes the model's fraud probability, then hands it to the rules engine
-   as "Rule 0" - the rules engine (not this file) makes the final fraud/legit
-   call, since the model's threshold check now lives inside evaluate_rules.
-5. If flagged as fraud -> transaction is logged, balances are NOT updated,
-   and a fraud_log entry is created for the admin portal
-6. If legit -> balances update normally, transaction is logged as "legit"
-
-Admin-only endpoints below also expose enriched transaction/fraud data
-(with names + phone numbers joined in) and summary stats for the dashboard.
-"""
-
 from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, HTTPException

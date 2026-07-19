@@ -1,10 +1,3 @@
-"""
-Two separate login flows:
-- Admin login (username/password, OAuth2 form) -> admin JWT
-- User login (phone_number/password, JSON body) -> user JWT
-Each token is tagged with a "role" claim so one can't be used as the other.
-"""
-
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException

@@ -1,13 +1,3 @@
-"""
-Admin-managed Merchants and Billers.
-
-Merchants -> used in PAYMENT transactions.
-Billers -> used in DEBIT transactions.
-
-These are stored as normal User accounts so they have balances and can
-receive money through the existing transaction flow.
-"""
-
 import re
 import secrets
 from typing import List, Optional

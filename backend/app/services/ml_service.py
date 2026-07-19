@@ -1,10 +1,3 @@
-"""
-Loads the trained XGBoost model, label encoder, and scaler once at startup.
-Builds features for a single incoming transaction in EXACTLY the same
-order/format used during training (see ml/preprocessing_final.py), then
-returns a fraud probability + decision based on the threshold from .env.
-"""
-
 import os
 from datetime import datetime
 import joblib

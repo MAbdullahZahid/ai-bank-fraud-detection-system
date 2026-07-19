@@ -1,10 +1,3 @@
-"""
-User management (admin-only CRUD) + the logged-in user's own profile.
-Regular users never see the full user directory or other users' phone
-numbers - they only ever type in a destination phone number when sending
-money (handled in transactions.py), like a mobile wallet account number.
-"""
-
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
